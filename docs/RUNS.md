@@ -170,7 +170,7 @@ engine → native integrations).
 
 ```
 cd backend && .venv/bin/python -m pytest -q
-83 passed
+138 passed
 ```
 
 Coverage: domain model and storage, agent registry (38 roles), CABER geometry
@@ -179,6 +179,78 @@ acceptance-criteria verification, self-improvement screening, real
 problem-solver code execution, and API integration. The only network boundary
 replaced in any test is the Agent Server client in the orchestrator tests, and
 that test module says so.
+
+---
+
+## Acceptance run — enterprise task-management application
+
+Request (Section 21): "Build an enterprise-grade task-management application
+with an original premium UI/UX, responsive frontend, backend, authentication,
+database, task management, user roles, analytics, API documentation and
+automated tests."
+
+The run is executed against the live model gateway and a real Agent Server.
+Findings from it, in order:
+
+### Run 1 — failed, cause hidden
+
+Reported only "agent conversation ended in error"; the project failed with 0/8
+criteria satisfied. Root cause was not visible.
+
+**Defect.** `collect_result` read only the first 100 events. The terminal
+`ConversationErrorEvent` is emitted last, so it was never seen. The true cause
+was `MaxIterationsReached` — the agent hit the 120-iteration ceiling mid-task
+after doing real work — and the server had already classified it
+`retryable: false`, which the code could not read.
+
+### Run 2 — failed, real cause visible
+
+After the fix the error surfaced correctly as `MaxIterationsReached`, and the
+iteration ceiling was raised to 400 (a task that scaffolds a whole application
+needs well over a hundred tool calls).
+
+Three further defects were found while watching this run:
+
+- **Truncated evidence.** The events search endpoint returns one page and
+  exposes no cursor — only `timestamp__gte`. Reading the first 100 events
+  missed most actions. `get_all_events` now pages on the last event's
+  timestamp. Verified against a live conversation: 573 events, 187 iterations
+  and 52 files, against ~30 and a handful before.
+- **Wrong argument location.** `file_editor` puts `path`/`command` at the top of
+  `action`; `terminal` nests them under `args`. Reading only `args` recorded
+  almost no files, so the artifact list was near-empty.
+- **Dependencies counted as deliverables.** An agent running `npm install`
+  created 15k files, all recorded as artifacts. `node_modules`, `.venv`, `dist`,
+  `build`, `target` and similar are now excluded; they stay in the workspace.
+- **Delivery not gated on the specification.** A run was marked `delivered`
+  whenever no task failed, even with zero acceptance criteria met. Unmet
+  criteria now fail the project.
+
+### Run 3 — resumed, then build-verified
+
+The run was interrupted by a backend restart. Resume had a defect of its own:
+
+- **Resume silently restarted.** `_run_full_pipeline` always re-planned, which
+  builds a fresh task graph and discards every completed task, its evidence and
+  its artifacts. `prepare_resume` now keeps succeeded tasks and resets a task
+  caught mid-flight to PENDING. Verified live: after a restart the completed
+  scaffold task was preserved and the two in-flight tasks resumed as attempt 2.
+
+Running the generated app's real build then showed the front end **does not
+compile** (TS2345, TS1005 and similar), and the generated monorepo has a real
+structure (`apps/web`, `apps/api`, root workspace scripts). A failing build is
+now repaired, not just reported: a bounded build → repair → rebuild cycle
+(`LEVEL5_MAX_BUILD_REPAIRS`, default 2) hands the compiler output to a
+`debugging_engineer` conversation whose prompt forbids disabling type checking,
+removing tests or loosening the build to force a pass.
+
+**Honest status:** the acceptance project reaches a real 11-task graph executed
+by domain-appropriate specialists (scaffold, database, security, backend,
+analytics, UI/UX, frontend, API, tests, CI, review), producing a real monorepo
+with a working `npm install` and a real build. The front end did **not** build
+on the recorded run; that is a real defect, and the repair loop that addresses
+it is new and has not yet been exercised on a full run. This is not a delivered
+enterprise application yet.
 
 ---
 

@@ -51,6 +51,11 @@ inspect role allocation and dependency chains):
 - [~] Execution (not just planning) has been demonstrated end-to-end for the web
   application domain. The other domains are planned correctly and routed to the
   right agents, but a full execution run has not been recorded for each.
+- [x] Browser preview for web applications: the app's real build is run, its
+  output is served at `/preview/`, and the frontend preview tab shows the build
+  command, status and output. A failing build is repaired (bounded) and
+  re-built, not hidden. Verified against a real generated monorepo: the build
+  runs and its true result is reported (it failed — see `RUNS.md`).
 - [ ] Verified preview/emulator integration for mobile and desktop.
 
 ## MILESTONE 4 — Problem-Solving Intelligence — `[~]`
