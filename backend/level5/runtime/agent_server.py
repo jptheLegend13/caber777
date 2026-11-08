@@ -196,11 +196,14 @@ class AgentServerClient:
         *,
         limit: int = 100,
         kind: str | None = None,
+        since: str | None = None,
     ) -> list[dict[str, Any]]:
         client = await self._http()
         params: dict[str, Any] = {"limit": min(limit, 100), "sort_order": "TIMESTAMP"}
         if kind:
             params["kind"] = kind
+        if since:
+            params["timestamp__gte"] = since
         response = await client.get(
             f"/api/conversations/{conversation_id}/events/search",
             params=params,
@@ -209,6 +212,37 @@ class AgentServerClient:
             return []
         payload = response.json()
         return payload.get("items") or payload.get("events") or []
+
+    async def get_all_events(
+        self, conversation_id: str, *, max_events: int = 5000
+    ) -> list[dict[str, Any]]:
+        """Read the whole event stream, newest cursor = last timestamp.
+
+        The search endpoint returns one page and exposes no cursor, but it does
+        accept ``timestamp__gte``. Paging on the last event's timestamp walks
+        the full run; ids are deduplicated because a page boundary can repeat
+        an event that shares the cursor's timestamp.
+        """
+        collected: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        cursor: str | None = None
+        while len(collected) < max_events:
+            page = await self.get_events(conversation_id, limit=100, since=cursor)
+            if not page:
+                break
+            added = 0
+            for event in page:
+                event_id = event.get("id")
+                if event_id and event_id not in seen:
+                    seen.add(event_id)
+                    collected.append(event)
+                    added += 1
+            if len(page) < 100 or added == 0:
+                break
+            cursor = page[-1].get("timestamp")
+            if not cursor:
+                break
+        return collected
 
     async def last_error(self, conversation_id: str) -> dict[str, Any] | None:
         """Fetch the conversation's terminal error event, if any.
@@ -298,11 +332,16 @@ class AgentServerClient:
     async def collect_result(
         self, conversation_id: str, status: str | None = None
     ) -> ExecutionResult:
-        """Read the event stream and extract actions, files and commands."""
+        """Read the whole event stream and extract actions, files and commands.
+
+        The search endpoint returns only one page, so reading the first 100
+        events misses most of a long run - including the terminal error, which
+        is emitted last. ``get_all_events`` walks the entire stream instead.
+        """
         if status is None:
             data = await self.get_conversation(conversation_id)
             status = data.get("execution_status", "unknown")
-        events = await self.get_events(conversation_id, limit=100)
+        events = await self.get_all_events(conversation_id)
 
         actions: list[dict[str, Any]] = []
         files: set[str] = set()
@@ -314,15 +353,18 @@ class AgentServerClient:
         for event in events:
             kind = event.get("kind")
             if kind == "ActionEvent":
-                tool = event.get("tool_name") or event.get("action", {}).get("kind")
                 action = event.get("action") or {}
+                tool = event.get("tool_name") or action.get("kind")
                 actions.append({"tool": tool, "id": event.get("id")})
-                args = action.get("args") or {}
-                path = args.get("path")
+                # Tools nest their arguments differently: file_editor puts
+                # `path`/`command` at the top of `action`, terminal nests them
+                # under `args`. Read both so evidence is not silently empty.
+                args = {**action, **(action.get("args") or {})}
+                path = args.get("path") or args.get("file_path")
                 if path:
                     files.add(path)
-                command = args.get("command")
-                if command:
+                command = args.get("command") or args.get("cmd")
+                if command and isinstance(command, str):
                     commands.append(command)
             elif kind == "MessageEvent" and event.get("source") == "agent":
                 message = event.get("llm_message") or {}

@@ -215,6 +215,11 @@ class Orchestrator:
             await self._integrate(project)
 
             failed = [t for t in project.task_graph.tasks if t.status == TaskStatus.FAILED]
+            unmet = [
+                c
+                for c in project.specification.acceptance_criteria
+                if not c.satisfied
+            ]
             if failed:
                 project.status = ProjectStatus.FAILED
                 await self._emit(
@@ -222,6 +227,17 @@ class Orchestrator:
                     "failed",
                     f"{len(failed)} task(s) failed",
                     tasks=[t.id for t in failed],
+                )
+            elif unmet:
+                # No task failed, but the specification was not met. Reporting
+                # this as delivered would be the same "files were generated"
+                # mistake in a different place.
+                project.status = ProjectStatus.FAILED
+                await self._emit(
+                    project,
+                    "failed",
+                    f"{len(unmet)} acceptance criteria unmet",
+                    criteria=[c.id for c in unmet],
                 )
             else:
                 project.status = ProjectStatus.DELIVERED
@@ -437,10 +453,31 @@ class Orchestrator:
         )
         return "\n".join(lines)
 
+    # Dependency and build directories are generated, not authored. Recording
+    # them as deliverables would report thousands of files the team did not
+    # write. They stay in the workspace; they are just not called artifacts.
+    _DEPENDENCY_DIRS = frozenset(
+        {
+            "node_modules",
+            ".venv",
+            "venv",
+            "__pycache__",
+            ".git",
+            ".pytest_cache",
+            ".mypy_cache",
+            ".ruff_cache",
+            "dist",
+            "build",
+            ".next",
+            "target",
+            "site-packages",
+        }
+    )
+
     def _record_artifacts(
         self, project: Project, task: Task, result: ExecutionResult
     ) -> None:
-        workspace = Path(project.workspace_path)
+        workspace = Path(project.workspace_path).resolve()
         seen = {a.path for a in project.artifacts}
         for rel in result.files_changed:
             path = Path(rel)
@@ -448,19 +485,21 @@ class Orchestrator:
                 path = workspace / rel
             try:
                 resolved = path.resolve()
-                resolved.relative_to(workspace.resolve())
+                rel_path = resolved.relative_to(workspace)
             except (ValueError, OSError):
                 continue
-            rel_path = str(resolved.relative_to(workspace.resolve()))
-            if rel_path in seen:
+            if any(part in self._DEPENDENCY_DIRS for part in rel_path.parts):
                 continue
-            seen.add(rel_path)
+            rel_str = str(rel_path)
+            if rel_str in seen:
+                continue
+            seen.add(rel_str)
             size = resolved.stat().st_size if resolved.exists() else 0
             project.artifacts.append(
                 Artifact(
                     name=resolved.name,
                     kind="file",
-                    path=rel_path,
+                    path=rel_str,
                     size_bytes=size,
                     created_by_task=task.id,
                     description=f"Produced by {task.title}",
