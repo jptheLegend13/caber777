@@ -31,12 +31,26 @@ Legend: `[x]` done and verified · `[~]` partially implemented · `[ ]` not star
 
 ## MILESTONE 3 — Universal creation capability — `[~]`
 
+Verified by planning probe (`scripts/`-equivalent: plan four distinct requests and
+inspect role allocation and dependency chains):
+
+| Request | Domain detected | Module | Tasks | Specialist roles allocated |
+|---|---|---|---|---|
+| Mobile fitness tracker | `mobile_app` | A | 12 | mobile, backend, ui/ux, security, devops, testing, review |
+| Multi-agent research assistant | `multi_agent_system` | A | 12 | multi-agent orchestration, ai research, ML, database, backend, review |
+| Linear-attention research + benchmark | `research` | B | 9 | technology research, ai research, ML, data, performance, testing |
+| Multi-tenant SaaS billing | `backend_api` | A | 12 | api, backend, cloud, devops, database, security, performance, review |
+
 - [x] Web application workflow (plan → backend → frontend → tests → review).
 - [x] Backend / API / database workflows.
-- [x] AI application and agent workflows (roles registered and routed).
-- [~] Mobile, desktop, enterprise, cloud and DevOps workflows: roles exist and
-  the planner routes to them, but no dedicated end-to-end acceptance run has
-  been recorded for each.
+- [x] AI application and multi-agent workflows, with the right specialists.
+- [x] Mobile workflow planning (mobile_engineer, offline sync, native
+  integrations, secure credential storage).
+- [x] Cloud / DevOps workflow planning (cloud_engineer, devops_engineer,
+  observability, CI/CD, idempotent webhooks).
+- [~] Execution (not just planning) has been demonstrated end-to-end for the web
+  application domain. The other domains are planned correctly and routed to the
+  right agents, but a full execution run has not been recorded for each.
 - [ ] Verified preview/emulator integration for mobile and desktop.
 
 ## MILESTONE 4 — Problem-Solving Intelligence — `[~]`
