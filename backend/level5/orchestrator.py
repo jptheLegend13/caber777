@@ -196,6 +196,35 @@ class Orchestrator:
     # ------------------------------------------------------------------ #
     # Execution
     # ------------------------------------------------------------------ #
+    def prepare_resume(self, project: Project) -> None:
+        """Reset a project for resumption without losing completed work.
+
+        Tasks that already succeeded are kept; a task caught mid-flight when
+        the process stopped is left RUNNING with no live conversation, so it is
+        reset to PENDING and will be attempted again. Blocked/skipped tasks are
+        also reset so a resolved upstream failure can unblock them.
+        """
+        for task in project.task_graph.tasks:
+            if task.status == TaskStatus.SUCCEEDED:
+                continue
+            # A task that failed with attempts left over is worth another go;
+            # one that exhausted its budget is left failed so the resume does
+            # not loop on a defect that retrying cannot fix.
+            if task.status == TaskStatus.FAILED and task.attempts >= task.max_attempts:
+                continue
+            if task.status in (
+                TaskStatus.RUNNING,
+                TaskStatus.READY,
+                TaskStatus.BLOCKED,
+                TaskStatus.SKIPPED,
+                TaskStatus.PENDING,
+                TaskStatus.FAILED,
+            ):
+                task.status = TaskStatus.PENDING
+                task.error = None
+        project.status = ProjectStatus.EXECUTING
+        project.log("resume", "Resuming run from saved task state")
+
     async def execute(self, project: Project) -> Project:
         """Execute the task graph to completion, then deliver."""
         if project.id in self._running:

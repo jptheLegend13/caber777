@@ -459,7 +459,14 @@ async def _run_full_pipeline(project_id: str, research: bool | None) -> None:
     if project is None:
         return
     try:
-        project = await _orchestrator.understand_and_plan(project, do_research=research)
+        # Resume an existing plan rather than replacing it. Re-planning here
+        # would build a new task graph and discard every result already
+        # recorded against the current one, so a restart would silently throw
+        # away completed work instead of continuing it (Section 15).
+        if project.task_graph.tasks:
+            _orchestrator.prepare_resume(project)
+        else:
+            project = await _orchestrator.understand_and_plan(project, do_research=research)
         await _orchestrator.execute(project)
     except asyncio.CancelledError:
         project.status = ProjectStatus.CANCELLED
