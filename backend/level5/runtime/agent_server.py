@@ -52,6 +52,10 @@ class ExecutionResult:
     files_changed: list[str] = field(default_factory=list)
     commands_run: list[str] = field(default_factory=list)
     error: str | None = None
+    # The agent server classifies its own errors. `retryable` is that verdict:
+    # None when the server gave none, True/False when it did. It is authoritative
+    # and overrides string matching when present.
+    retryable: bool | None = None
 
     @property
     def succeeded(self) -> bool:
@@ -187,17 +191,40 @@ class AgentServerClient:
         return response.json()
 
     async def get_events(
-        self, conversation_id: str, *, limit: int = 100
+        self,
+        conversation_id: str,
+        *,
+        limit: int = 100,
+        kind: str | None = None,
     ) -> list[dict[str, Any]]:
         client = await self._http()
+        params: dict[str, Any] = {"limit": min(limit, 100), "sort_order": "TIMESTAMP"}
+        if kind:
+            params["kind"] = kind
         response = await client.get(
             f"/api/conversations/{conversation_id}/events/search",
-            params={"limit": min(limit, 100), "sort_order": "TIMESTAMP"},
+            params=params,
         )
         if response.status_code >= 400:
             return []
         payload = response.json()
         return payload.get("items") or payload.get("events") or []
+
+    async def last_error(self, conversation_id: str) -> dict[str, Any] | None:
+        """Fetch the conversation's terminal error event, if any.
+
+        Read by kind rather than by position: the error is emitted last, so a
+        plain first-N-events read misses it on any long conversation and
+        reports the useless generic "ended in error".
+        """
+        try:
+            events = await self.get_events(
+                conversation_id, limit=10, kind="ConversationErrorEvent"
+            )
+        except Exception as exc:  # noqa: BLE001 - diagnostics must not raise
+            logger.warning("could not read error event: %s", exc)
+            return None
+        return events[-1] if events else None
 
     async def send_message(self, conversation_id: str, text: str, *, run: bool = True) -> None:
         client = await self._http()
@@ -282,6 +309,7 @@ class AgentServerClient:
         commands: list[str] = []
         final_message = ""
         error: str | None = None
+        retryable: bool | None = None
 
         for event in events:
             kind = event.get("kind")
@@ -308,9 +336,21 @@ class AgentServerClient:
                     final_message = text
             elif kind == "ConversationErrorEvent":
                 error = event.get("detail") or event.get("code") or "conversation error"
+                classification = event.get("classification") or {}
+                retryable = classification.get("retryable")
 
-        if status == "error" and not error:
-            error = "agent conversation ended in error"
+        # The error event is emitted last, so it is absent from the first 100
+        # events on a long conversation. Read it explicitly.
+        if status in {"error", "stuck"}:
+            terminal = await self.last_error(conversation_id)
+            if terminal:
+                detail = terminal.get("detail") or terminal.get("code")
+                code = terminal.get("code") or "ConversationError"
+                error = f"{code}: {detail}" if detail else str(code)
+                classification = terminal.get("classification") or {}
+                retryable = classification.get("retryable")
+            elif not error:
+                error = "agent conversation ended in error"
 
         return ExecutionResult(
             conversation_id=conversation_id,
@@ -321,6 +361,7 @@ class AgentServerClient:
             files_changed=sorted(files),
             commands_run=commands,
             error=error,
+            retryable=retryable,
         )
 
     async def stream_events(

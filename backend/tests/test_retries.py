@@ -56,3 +56,46 @@ class TestShouldRetry:
         orch = _orch()
         assert orch._retry_delay(1) < orch._retry_delay(2)
         assert orch._retry_delay(10) <= 30.0
+
+
+class TestServerRetryabilityVerdict:
+    """When the agent server classifies an error, that verdict is authoritative."""
+
+    def test_server_says_not_retryable_overrides_transient_wording(self):
+        t = _task()
+        t.attempts = 1
+        # "timed out" alone would be retried, but the server said no.
+        assert (
+            _orch()._should_retry(t, "gateway 504 timed out", retryable=False) is False
+        )
+
+    def test_server_says_retryable_overrides_permanent_wording(self):
+        t = _task()
+        t.attempts = 1
+        assert (
+            _orch()._should_retry(t, "the test suite failed", retryable=True) is True
+        )
+
+    def test_max_iterations_reached_is_not_retryable(self):
+        """The server marks MaxIterationsReached non-retryable; retrying it
+        would just hit the same ceiling."""
+        t = _task()
+        t.attempts = 1
+        err = "MaxIterationsReached: Agent reached maximum iterations limit (120)."
+        assert _orch()._should_retry(t, err, retryable=False) is False
+
+    def test_verdict_none_falls_back_to_string_matching(self):
+        t = _task()
+        t.attempts = 1
+        assert _orch()._should_retry(t, "504 gateway timeout", retryable=None) is True
+
+    def test_verdict_none_and_unknown_error_is_not_retried(self):
+        t = _task()
+        t.attempts = 1
+        assert _orch()._should_retry(t, "the agent gave up", retryable=None) is False
+
+    def test_attempt_budget_still_wins_over_retryable_verdict(self):
+        t = _task(max_attempts=2)
+        t.attempts = 2
+        assert _orch()._should_retry(t, "504", retryable=True) is False
+

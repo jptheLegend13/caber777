@@ -350,7 +350,7 @@ class Orchestrator:
                 return
 
             error = result.error or "task did not complete successfully"
-            if self._should_retry(task, error):
+            if self._should_retry(task, error, retryable=result.retryable):
                 await self._emit(
                     project,
                     "task_retry",
@@ -369,15 +369,23 @@ class Orchestrator:
             await self._persist(project)
             return
 
-    def _should_retry(self, task: Task, error: str) -> bool:
+    def _should_retry(
+        self, task: Task, error: str, retryable: bool | None = None
+    ) -> bool:
         """Retry only transient infrastructure faults, never logic failures.
 
         A gateway timeout, rate limit or dropped connection is worth retrying.
         A compile error, a failed test or a bad plan is not: retrying it just
         burns budget and would mask a real defect.
+
+        When the agent server classified the error it tells us whether it is
+        retryable; that verdict wins. String matching is only the fallback for
+        errors the server did not classify.
         """
         if task.attempts >= task.max_attempts:
             return False
+        if retryable is not None:
+            return retryable
         lowered = error.lower()
         if any(s in lowered for s in _PERMANENT_FAILURE_MARKERS):
             return False

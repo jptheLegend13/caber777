@@ -59,8 +59,12 @@ class Settings:
         # Docker runtime for agent conversations. "local" runs in-process; the
         # Agent Server default is used when unset.
         self.conversation_runtime: str = _env("LEVEL5_CONVERSATION_RUNTIME", "local")
+        # Iterations a single agent conversation may take. A task that scaffolds
+        # an entire application (frontend, backend, config, docs) needs well
+        # over a hundred tool calls; 120 truncated real work mid-task. Raise via
+        # LEVEL5_MAX_ITERATIONS. Cost is bounded by LEVEL5_MAX_BUDGET_USD.
         self.default_max_iterations: int = int(
-            _env("LEVEL5_MAX_ITERATIONS", "120")
+            _env("LEVEL5_MAX_ITERATIONS", "400")
         )
         self.default_max_budget: float | None = _optional_float(
             _env("LEVEL5_MAX_BUDGET_USD", "")
