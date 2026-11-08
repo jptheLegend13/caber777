@@ -19,8 +19,10 @@ from pathlib import Path
 
 logger = logging.getLogger("level5.preview")
 
-# Directories that commonly hold the front end of a generated monorepo.
-_CANDIDATE_DIRS = ("", "apps/web", "frontend", "web", "client", "apps/frontend")
+# Directories that commonly hold the front end of a generated monorepo. Listed
+# most-specific-first so a monorepo's web package is chosen over its root
+# aggregate build, whose output is not a single servable app.
+_CANDIDATE_DIRS = ("apps/web", "apps/frontend", "frontend", "web", "client", "")
 # Where a bundler usually writes its output, relative to the package root.
 _DIST_CANDIDATES = ("dist", "build", "out", ".output/public")
 

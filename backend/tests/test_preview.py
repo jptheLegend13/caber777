@@ -53,9 +53,23 @@ class TestDetection:
     def test_detection_is_deterministic_between_candidates(self, tmp_path):
         _write_pkg(tmp_path, "", {"build": "a"})
         _write_pkg(tmp_path, "frontend", {"build": "b"})
-        # The root candidate is searched first, so it wins.
+        # The front-end candidate is searched before the root aggregate, so a
+        # monorepo's web package wins over the root build.
         app = detect_web_app(tmp_path)
-        assert app is not None and app.build_script == "a"
+        assert app is not None and app.build_script == "b"
+
+    def test_apps_web_wins_over_root(self, tmp_path):
+        _write_pkg(tmp_path, "", {"build": "turbo build"})
+        _write_pkg(tmp_path, "apps/web", {"build": "vite build"})
+        app = detect_web_app(tmp_path)
+        assert app is not None
+        assert app.build_script == "vite build"
+        assert app.package_dir == tmp_path / "apps/web"
+
+    def test_root_used_when_no_frontend_package_exists(self, tmp_path):
+        _write_pkg(tmp_path, "", {"build": "vite build"})
+        app = detect_web_app(tmp_path)
+        assert app is not None and app.package_dir == tmp_path
 
 
 class TestDistFinding:

@@ -66,6 +66,10 @@ class Settings:
         self.default_max_iterations: int = int(
             _env("LEVEL5_MAX_ITERATIONS", "400")
         )
+        # Bounded build->repair->rebuild cycles. A failing build is a real
+        # defect, so it is repaired, but a project that cannot be fixed must be
+        # reported as such rather than looping.
+        self.max_build_repairs: int = int(_env("LEVEL5_MAX_BUILD_REPAIRS", "2"))
         self.default_max_budget: float | None = _optional_float(
             _env("LEVEL5_MAX_BUDGET_USD", "")
         )

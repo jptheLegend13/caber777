@@ -605,39 +605,125 @@ class Orchestrator:
         return best[1] if best else None
 
     async def _build_deliverable(self, project: Project) -> None:
-        """Run the generated app's real build so the preview is of real output.
+        """Build the generated app; if it fails, dispatch a repair and rebuild.
 
-        Domain-agnostic: if the workspace contains a Node package with a build
-        script, it is built. A failed build is recorded as a failed check,
-        never silently skipped.
+        A build failure is a real defect, not a cosmetic one, so it is handed
+        to a debugging agent with the compiler output and the build is retried.
+        Bounded by settings.max_build_repairs so a project that cannot be fixed
+        is reported as such rather than looping.
         """
+        from level5.models import TestResult
         from level5.preview import build_web_app
 
-        try:
-            result = await asyncio.to_thread(build_web_app, project.workspace_path)
-        except Exception as exc:  # noqa: BLE001 - build must not crash the run
-            logger.warning("build raised: %s", exc)
-            return
-        if not result.attempted:
-            return
-        from level5.models import TestResult
-
-        project.tests.append(
-            TestResult(
-                suite="build",
-                name=result.command or "npm run build",
-                status="passed" if result.succeeded else "failed",
-                message=(result.output or "")[-800:],
+        max_repairs = max(0, int(getattr(self.settings, "max_build_repairs", 2)))
+        last_repair = None
+        for repair_round in range(max_repairs + 1):
+            try:
+                result = await asyncio.to_thread(build_web_app, project.workspace_path)
+            except Exception as exc:  # noqa: BLE001 - build must not crash the run
+                logger.warning("build raised: %s", exc)
+                return
+            if not result.attempted:
+                return
+            status = "passed" if result.succeeded else "failed"
+            project.tests.append(
+                TestResult(
+                    suite="build",
+                    name=result.command or "npm run build",
+                    status=status,
+                    message=(result.output or "")[-800:],
+                )
             )
+            await self._emit(
+                project,
+                "build",
+                f"Frontend build {'succeeded' if result.succeeded else 'failed'}"
+                + (f" -> {result.dist_dir}" if result.dist_dir else "")
+                + (f" (repair {repair_round})" if repair_round else ""),
+                succeeded=result.succeeded,
+                command=result.command,
+            )
+            if result.succeeded:
+                # A repair round is only successful once its rebuild passes;
+                # the repair's acceptance criterion is "the build exits 0".
+                if last_repair is not None:
+                    last_repair.status = TaskStatus.SUCCEEDED
+                return
+            if last_repair is not None and last_repair.status == TaskStatus.SUCCEEDED:
+                last_repair.status = TaskStatus.FAILED
+                last_repair.error = "build still failing after this repair"
+            if repair_round >= max_repairs:
+                await self._emit(
+                    project,
+                    "build",
+                    f"Build still failing after {max_repairs} repair attempt(s); "
+                    "the deliverable does not build",
+                    succeeded=False,
+                )
+                return
+            last_repair = await self._repair_build(project, result, repair_round + 1)
+            await self._persist(project)
+
+    async def _repair_build(self, project: Project, result, repair_round: int) -> Task:
+        """Dispatch a debugging agent to fix a failing build, with the errors."""
+        from level5.models import Task, TaskStatus
+        from level5.agents.registry import get_role
+
+        role = get_role("debugging_engineer")
+        task = Task(
+            title=f"Repair failing frontend build (round {repair_round})",
+            objective=(
+                "The frontend build fails. Read the compiler output below, fix the "
+                "source so the build succeeds, and verify by running the build "
+                "command yourself. Do not disable type checking, remove tests, or "
+                "loosen the build to make it pass."
+            ),
+            agent_role=role.name,
+            phase="repair",
+            inputs=[result.command or "npm run build"],
+            outputs=["a frontend that builds cleanly"],
+            acceptance_criteria=["npm run build exits 0"],
+            status=TaskStatus.RUNNING,
         )
+        task.attempts = 1
+        project.task_graph.tasks.append(task)
         await self._emit(
             project,
-            "build",
-            f"Frontend build {'succeeded' if result.succeeded else 'failed'}"
-            + (f" -> {result.dist_dir}" if result.dist_dir else ""),
-            succeeded=result.succeeded,
-            command=result.command,
+            "repair",
+            f"[{role.title}] repairing failing build (round {repair_round})",
+            task_id=task.id,
+            error=(result.output or "")[-300:],
         )
+        prompt = (
+            f"{role.system_prompt}\n\n"
+            f"Workspace: {project.workspace_path}\n\n"
+            f"Objective: {task.objective}\n\n"
+            f"Build command: {result.command}\n"
+            f"Package directory: {result.package_dir}\n\n"
+            f"Build output:\n{result.output[-6000:]}\n"
+        )
+        outcome = await self.agent.run_to_completion(
+            working_dir=project.workspace_path,
+            task_prompt=prompt,
+            tools=list(role.tools),
+            system_prompt=role.system_prompt,
+            max_iterations=self.settings.default_max_iterations,
+            timeout=1800.0,
+        )
+        task.status = (
+            TaskStatus.SUCCEEDED if outcome.succeeded else TaskStatus.FAILED
+        )
+        task.error = outcome.error
+        task.evidence.append(outcome.final_message[:500])
+        self._record_artifacts(project, task, outcome)
+        await self._emit(
+            project,
+            "repair",
+            f"[{role.title}] repair round {repair_round} "
+            f"{'completed' if outcome.succeeded else 'failed'}",
+            task_id=task.id,
+        )
+        return task
 
     async def _integrate(self, project: Project) -> None:
         """Build the app, write the project report, refresh artifacts."""
