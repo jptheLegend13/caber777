@@ -67,6 +67,45 @@ def _keywords(text: str) -> set[str]:
     }
 
 
+# Roles that verify other tasks rather than produce the artifact a criterion
+# describes. They are not accepted as the evidence owner for a criterion.
+_REVIEW_ROLES = {
+    "code_reviewer",
+    "security_engineer",
+    "performance_engineer",
+    "benchmarking_agent",
+    "technical_decision_reviewer",
+}
+
+# Errors worth retrying: infrastructure hiccups that say nothing about the
+# quality of the agent's work.
+_TRANSIENT_FAILURE_MARKERS = (
+    "504",
+    "502",
+    "503",
+    "gateway timeout",
+    "timed out",
+    "timeout",
+    "rate limit",
+    "429",
+    "connection reset",
+    "connection error",
+    "temporarily unavailable",
+    "overloaded",
+)
+
+# Errors that must never be retried: they are the agent's own result.
+_PERMANENT_FAILURE_MARKERS = (
+    "test failed",
+    "tests failed",
+    "syntaxerror",
+    "assertionerror",
+    "traceback",
+    "permission denied",
+    "blocked by an upstream failure",
+)
+
+
 class Orchestrator:
     """Drives a project from request to delivered artifacts."""
 
@@ -237,73 +276,122 @@ class Orchestrator:
                 task.error = "blocked by an upstream failure"
 
     async def _run_task(self, project: Project, task: Task) -> None:
-        task.status = TaskStatus.RUNNING
-        task.attempts += 1
-        task.started_at = datetime.now(timezone.utc)
         role = get_role(task.agent_role)
-        await self._emit(
-            project,
-            "task_started",
-            f"[{role.title}] {task.title}",
-            task_id=task.id,
-            role=role.name,
-            phase=task.phase,
-        )
-        # Persist the RUNNING state immediately so a live client sees which
-        # tasks are in flight, not just the last completed batch.
-        await self._persist(project)
-
         prompt = self._task_prompt(project, task)
         workspace = str(Path(project.workspace_path))
-        try:
-            result = await self.agent.run_to_completion(
-                working_dir=workspace,
-                task_prompt=prompt,
-                tools=list(task.tools),
-                system_prompt=role.system_prompt,
-                max_iterations=self.settings.default_max_iterations,
-                timeout=1800.0,
-            )
-        except Exception as exc:  # noqa: BLE001 - surfaced as task failure
-            task.status = TaskStatus.FAILED
-            task.error = str(exc)
-            task.finished_at = datetime.now(timezone.utc)
+
+        while True:
+            task.status = TaskStatus.RUNNING
+            task.attempts += 1
+            task.started_at = datetime.now(timezone.utc)
             await self._emit(
-                project, "task_failed", f"[{role.title}] {task.title}: {exc}",
+                project,
+                "task_started",
+                f"[{role.title}] {task.title}"
+                + (f" (attempt {task.attempts})" if task.attempts > 1 else ""),
+                task_id=task.id,
+                role=role.name,
+                phase=task.phase,
+            )
+            # Persist the RUNNING state immediately so a live client sees which
+            # tasks are in flight, not just the last completed batch.
+            await self._persist(project)
+
+            try:
+                result = await self.agent.run_to_completion(
+                    working_dir=workspace,
+                    task_prompt=prompt,
+                    tools=list(task.tools),
+                    system_prompt=role.system_prompt,
+                    max_iterations=self.settings.default_max_iterations,
+                    timeout=1800.0,
+                )
+            except Exception as exc:  # noqa: BLE001 - surfaced as task failure
+                if self._should_retry(task, str(exc)):
+                    await self._emit(
+                        project,
+                        "task_retry",
+                        f"[{role.title}] {task.title}: transient error, retrying "
+                        f"({task.attempts}/{task.max_attempts})",
+                        task_id=task.id,
+                        error=str(exc)[:200],
+                    )
+                    await asyncio.sleep(self._retry_delay(task.attempts))
+                    continue
+                self._fail_task(task, str(exc))
+                await self._emit(
+                    project, "task_failed", f"[{role.title}] {task.title}: {exc}",
+                    task_id=task.id,
+                )
+                await self._persist(project)
+                return
+
+            if result.succeeded:
+                task.conversation_id = result.conversation_id
+                project.conversation_ids.append(result.conversation_id)
+                self._record_artifacts(project, task, result)
+                project.tests.extend(self._tests_from(result, task))
+                task.status = TaskStatus.SUCCEEDED
+                task.error = None
+                task.evidence.append(result.final_message[:500])
+                for path in result.files_changed:
+                    task.evidence.append(f"file: {path}")
+                task.finished_at = datetime.now(timezone.utc)
+                await self._emit(
+                    project,
+                    "task_succeeded",
+                    f"[{role.title}] {task.title} completed",
+                    task_id=task.id,
+                    files=len(result.files_changed),
+                    iterations=result.iterations,
+                    attempts=task.attempts,
+                )
+                await self._persist(project)
+                return
+
+            error = result.error or "task did not complete successfully"
+            if self._should_retry(task, error):
+                await self._emit(
+                    project,
+                    "task_retry",
+                    f"[{role.title}] {task.title}: transient error, retrying "
+                    f"({task.attempts}/{task.max_attempts})",
+                    task_id=task.id,
+                    error=error[:200],
+                )
+                await asyncio.sleep(self._retry_delay(task.attempts))
+                continue
+            self._fail_task(task, error)
+            await self._emit(
+                project, "task_failed", f"[{role.title}] {task.title}: {error}",
                 task_id=task.id,
             )
             await self._persist(project)
             return
 
-        task.conversation_id = result.conversation_id
-        project.conversation_ids.append(result.conversation_id)
-        self._record_artifacts(project, task, result)
-        project.tests.extend(self._tests_from(result, task))
+    def _should_retry(self, task: Task, error: str) -> bool:
+        """Retry only transient infrastructure faults, never logic failures.
 
-        if result.succeeded:
-            task.status = TaskStatus.SUCCEEDED
-            task.evidence.append(result.final_message[:500])
-            for path in result.files_changed:
-                task.evidence.append(f"file: {path}")
-            await self._emit(
-                project,
-                "task_succeeded",
-                f"[{role.title}] {task.title} completed",
-                task_id=task.id,
-                files=len(result.files_changed),
-                iterations=result.iterations,
-            )
-        else:
-            task.status = TaskStatus.FAILED
-            task.error = result.error or "task did not complete successfully"
-            await self._emit(
-                project,
-                "task_failed",
-                f"[{role.title}] {task.title}: {task.error}",
-                task_id=task.id,
-            )
+        A gateway timeout, rate limit or dropped connection is worth retrying.
+        A compile error, a failed test or a bad plan is not: retrying it just
+        burns budget and would mask a real defect.
+        """
+        if task.attempts >= task.max_attempts:
+            return False
+        lowered = error.lower()
+        if any(s in lowered for s in _PERMANENT_FAILURE_MARKERS):
+            return False
+        return any(s in lowered for s in _TRANSIENT_FAILURE_MARKERS)
+
+    @staticmethod
+    def _retry_delay(attempt: int) -> float:
+        return min(30.0, 5.0 * (2 ** (attempt - 1)))
+
+    @staticmethod
+    def _fail_task(task: Task, error: str) -> None:
+        task.status = TaskStatus.FAILED
+        task.error = error
         task.finished_at = datetime.now(timezone.utc)
-        await self._persist(project)
 
     def _task_prompt(self, project: Project, task: Task) -> str:
         spec = project.specification
@@ -418,12 +506,19 @@ class Orchestrator:
 
     @staticmethod
     def _matching_task(statement: str, candidates: list[Task]) -> Task | None:
-        """Return the best succeeded task that addresses `statement`, if any."""
+        """Return the best succeeded task that addresses `statement`, if any.
+
+        Review-only roles are excluded as evidence owners: a reviewer task lists
+        every criterion in its own scope, so it would otherwise absorb all of
+        them and report universal satisfaction without producing anything.
+        """
         keywords = _keywords(statement)
         if not keywords:
             return None
         best: tuple[float, Task] | None = None
         for task in candidates:
+            if task.agent_role in _REVIEW_ROLES:
+                continue
             haystack = " ".join(
                 [task.title, task.objective, *task.acceptance_criteria]
             )

@@ -103,11 +103,53 @@ frontend/tailwind.config.ts, frontend/postcss.config.js, frontend/tsconfig.*.jso
 scripts/gen_tokens.py, scripts/validate_spec.py
 ```
 
-This run was still in progress when this record was written; the first three
-tasks (architecture, database schema, design system) had succeeded and two
-backend tasks were executing in parallel. Task outcomes are reported as they
-actually occur — a task that fails is recorded as failed and its dependents are
-skipped, never silently marked done.
+This run completed with an **honest failure** and is reported as such:
+
+```
+status: failed
+  task_succeeded  Architecture, data model, API contract, design-token spec
+  task_succeeded  PostgreSQL schema, ORM models, and Alembic migrations
+  task_succeeded  Original design system: tokens and component library
+  task_failed     Authentication, JWT tokens, RBAC, and audit logging
+                  -> agent conversation ended in error
+  task_skipped    Task CRUD, assignment, and analytics API endpoints (x5 dependents)
+  task_skipped    Security review, test suite, CI, review (blocked upstream)
+```
+
+The failing task's agent conversation ended in an error (the shared model
+gateway returned HTTP 504, `Agent run timed out`, under load). Eight dependent
+tasks were marked `skipped` with reason "blocked by an upstream failure" rather
+than being run anyway or marked done. The project status is `failed`. No task
+was recorded as successful without evidence.
+
+Two real defects this run exposed, both fixed afterwards with tests:
+
+1. **Verification marked all 9 criteria satisfied** even though the project
+   failed. The old code fell back to "any succeeded task owns this criterion".
+   `_verify` now matches each criterion to the task that actually produces it,
+   excludes review-only roles from owning criteria, and leaves an unaddressed
+   criterion unsatisfied with evidence "no task produced evidence for this
+   criterion".
+2. **A task had no retry path.** A transient gateway timeout failed the task
+   permanently. Tasks now carry `max_attempts` (default 2) and retry with
+   exponential backoff *only* for transient infrastructure faults (504/502/503,
+   timeouts, rate limits, connection errors), never for the agent's own failures
+   (failed tests, syntax errors, assertion errors). Retrying a real defect would
+   burn budget and hide the defect.
+
+Artifacts the run did produce before failing (160+ real files), including:
+
+```
+docs/architecture.md, docs/api-contract.md, docs/design-tokens.md, docs/tokens.json
+backend/alembic/versions/000{1..4}_*.py, backend/alembic.ini, backend/app/{db,models,seed}.py
+frontend/src/components/ui/{Button,Input,Textarea,Badge,Spinner,Toast,Tooltip,ThemeProvider}.tsx
+frontend/src/design/tokens.ts, frontend/src/styles/{tokens,global}.css
+frontend/tailwind.config.ts, frontend/postcss.config.js, frontend/tsconfig.*.json
+scripts/gen_tokens.py, scripts/validate_spec.py
+```
+
+A re-run of this acceptance request on the corrected code is the outstanding
+item; it is listed as not done rather than claimed.
 
 ## Run 4 — domain-planning coverage (planner probe)
 
@@ -128,7 +170,7 @@ engine → native integrations).
 
 ```
 cd backend && .venv/bin/python -m pytest -q
-74 passed
+83 passed
 ```
 
 Coverage: domain model and storage, agent registry (38 roles), CABER geometry

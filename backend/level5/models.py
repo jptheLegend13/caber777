@@ -197,6 +197,7 @@ class Task(BaseModel):
     evidence: list[str] = Field(default_factory=list)
     error: str | None = None
     attempts: int = 0
+    max_attempts: int = 2
     started_at: datetime | None = None
     finished_at: datetime | None = None
     # OpenHands execution linkage

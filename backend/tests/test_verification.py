@@ -44,6 +44,48 @@ class TestMatchingTask:
         assert owner is not None
         assert "Authentication" in owner.title
 
+    def test_review_only_task_is_not_evidence_owner(self):
+        """A reviewer lists every criterion, so it must not own any of them."""
+        orch = _orchestrator()
+        reviewer = _task(
+            "Independent end-to-end review and acceptance verification",
+            "Verify every acceptance criterion: authentication, analytics, API "
+            "documentation, design system, responsive layout, test suite.",
+            ["All acceptance criteria are verified"],
+        )
+        reviewer.agent_role = "code_reviewer"
+        producer = _task(
+            "Interactive OpenAPI 3 documentation served and complete",
+            "Serve complete interactive OpenAPI documentation.",
+            ["The OpenAPI documentation is served and interactive"],
+        )
+        owner = orch._matching_task(
+            "Interactive API documentation is served and complete",
+            [reviewer, producer],
+        )
+        assert owner is not None
+        assert owner.agent_role != "code_reviewer"
+        assert "OpenAPI" in owner.title
+
+    def test_review_role_excluded_even_when_it_scores_highest(self):
+        orch = _orchestrator()
+        reviewer = _task(
+            "Independent end-to-end review and acceptance verification",
+            "Original design system theme default design system review.",
+            ["The UI uses an original design system rather than a default theme"],
+        )
+        reviewer.agent_role = "security_engineer"
+        producer = _task(
+            "Original design system: tokens and hand-built component library",
+            "Build the original design system and theme tokens.",
+        )
+        owner = orch._matching_task(
+            "The UI uses an original design system rather than a default theme",
+            [reviewer, producer],
+        )
+        assert owner is not None
+        assert owner.title.startswith("Original design system")
+
     def test_returns_none_when_no_task_addresses_the_criterion(self):
         orch = _orchestrator()
         tasks = [_task("Analytics dashboard", "Build the analytics dashboard.")]
