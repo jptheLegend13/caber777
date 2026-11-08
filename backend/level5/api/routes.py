@@ -343,6 +343,17 @@ async def caber_viewer(project_id: str) -> FileResponse:
 # --------------------------------------------------------------------------- #
 # Benchmark & improvement records
 # --------------------------------------------------------------------------- #
+@router.get("/providers")
+async def list_providers() -> dict[str, Any]:
+    """Available model providers and their declared capabilities.
+
+    Returns the *name* of each credential environment variable, never a value.
+    """
+    from level5.llm.providers import get_registry
+
+    return get_registry().report()
+
+
 @router.get("/benchmarks")
 async def list_benchmarks(limit: int = 200) -> dict[str, Any]:
     items = await get_store().list_benchmarks(limit=limit)
