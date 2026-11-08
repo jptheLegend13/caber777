@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -37,6 +38,33 @@ from level5.runtime.agent_server import AgentServerClient, ExecutionResult
 from level5.storage.store import get_store
 
 logger = logging.getLogger("level5.orchestrator")
+
+# Words too common to signal that a task addresses an acceptance criterion.
+_STOPWORDS = {
+    "with", "that", "this", "from", "have", "must", "able", "into", "than",
+    "then", "when", "which", "where", "there", "their", "they", "them", "been",
+    "each", "does", "your", "user", "users", "using", "used", "also", "such",
+    "more", "most", "only", "over", "same", "some", "will", "would", "should",
+    "could", "about", "after", "before", "between", "both", "other", "any",
+    "all", "and", "the", "for", "are", "not", "can", "its", "own", "one",
+}
+
+
+def _stem(word: str) -> str:
+    """Crude suffix stripping so 'authenticate' matches 'authentication'."""
+    for suffix in ("ation", "ting", "ing", "ions", "ion", "ate", "ed", "es", "s"):
+        if word.endswith(suffix) and len(word) - len(suffix) >= 4:
+            return word[: -len(suffix)]
+    return word
+
+
+def _keywords(text: str) -> set[str]:
+    """Significant, lightly stemmed words in `text`."""
+    return {
+        _stem(w)
+        for w in re.findall(r"[a-z]{3,}", text.lower())
+        if w not in _STOPWORDS
+    }
 
 
 class Orchestrator:
@@ -364,36 +392,46 @@ class Orchestrator:
     # Verification, integration, delivery
     # ------------------------------------------------------------------ #
     async def _verify(self, project: Project) -> None:
-        """Record per-criterion verification state from task evidence."""
-        succeeded = {
-            t.id for t in project.task_graph.tasks if t.status == TaskStatus.SUCCEEDED
-        }
+        """Record per-criterion verification state from task evidence.
+
+        A criterion is satisfied only when a succeeded task actually addresses
+        it — matched on the task's own acceptance criteria, objective and title.
+        A criterion no task addresses is left unsatisfied and flagged as
+        unverified rather than being marked met because *something* ran.
+        """
+        succeeded = [
+            t for t in project.task_graph.tasks if t.status == TaskStatus.SUCCEEDED
+        ]
         for criterion in project.specification.acceptance_criteria:
-            owner = next(
-                (
-                    t
-                    for t in project.task_graph.tasks
-                    if t.id in succeeded
-                    and any(
-                        criterion.statement[:40].lower() in c.lower()
-                        for c in t.acceptance_criteria
-                    )
-                ),
-                None,
-            )
-            if owner is None:
-                owner = next(
-                    (t for t in project.task_graph.tasks if t.id in succeeded), None
-                )
+            owner = self._matching_task(criterion.statement, succeeded)
             criterion.satisfied = owner is not None
             if owner is not None:
                 criterion.evidence = f"task {owner.id} ({owner.title})"
+            else:
+                criterion.evidence = "no task produced evidence for this criterion"
+        met = sum(1 for c in project.specification.acceptance_criteria if c.satisfied)
         await self._emit(
             project,
             "verification",
-            f"{sum(1 for c in project.specification.acceptance_criteria if c.satisfied)}"
-            f"/{len(project.specification.acceptance_criteria)} criteria satisfied",
+            f"{met}/{len(project.specification.acceptance_criteria)} criteria satisfied",
         )
+
+    @staticmethod
+    def _matching_task(statement: str, candidates: list[Task]) -> Task | None:
+        """Return the best succeeded task that addresses `statement`, if any."""
+        keywords = _keywords(statement)
+        if not keywords:
+            return None
+        best: tuple[float, Task] | None = None
+        for task in candidates:
+            haystack = " ".join(
+                [task.title, task.objective, *task.acceptance_criteria]
+            )
+            overlap = len(keywords & _keywords(haystack))
+            score = overlap / len(keywords)
+            if overlap >= 2 and score >= 0.34 and (best is None or score > best[0]):
+                best = (score, task)
+        return best[1] if best else None
 
     async def _integrate(self, project: Project) -> None:
         """Write the project report and refresh the artifact list."""

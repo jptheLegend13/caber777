@@ -67,13 +67,22 @@ Legend: `[x]` done and verified · `[~]` partially implemented · `[ ]` not star
 - [ ] A single run that spans two intelligences (for example, an application that
   renders a CABER building) is not yet implemented.
 
-## MILESTONE 7 — Continuous research and improvement — `[ ]`
+## MILESTONE 7 — Continuous research and improvement — `[~]`
 
-- [x] Benchmark and improvement record tables exist in storage.
-- [ ] The controlled self-improvement loop (detect → research → implement in
-  isolation → test → compare → review → accept/reject → record) is not yet
-  implemented.
-- [ ] The reproducible competitive benchmark suite is not yet implemented.
+- [x] Reproducible self-benchmarking: every run records real measured metrics
+  (task success rate, test pass rate, acceptance-criteria rate, artifacts,
+  conversations, elapsed time, model) to the benchmark store.
+- [x] Controlled self-improvement loop: detect (from real records) → propose →
+  screen → record. Proposals are never auto-applied, and a screen rejects any
+  proposal that weakens a safety control, widens permissions, removes an
+  approval gate, applies self-modification to production, exposes credentials
+  or creates agents recursively. Each proposal must name its tests and its
+  before/after comparison.
+- [ ] Independent review and accept/reject decision by a separate reviewer agent
+  (the review step currently requires a human decision).
+- [ ] The competitive benchmark suite: a fixed set of equivalent tasks run
+  against comparable systems under the same model and hardware. **Not run.**
+  No superiority claim is made anywhere in this platform.
 
 ---
 
