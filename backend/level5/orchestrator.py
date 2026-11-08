@@ -575,8 +575,45 @@ class Orchestrator:
                 best = (score, task)
         return best[1] if best else None
 
+    async def _build_deliverable(self, project: Project) -> None:
+        """Run the generated app's real build so the preview is of real output.
+
+        Domain-agnostic: if the workspace contains a Node package with a build
+        script, it is built. A failed build is recorded as a failed check,
+        never silently skipped.
+        """
+        from level5.preview import build_web_app
+
+        try:
+            result = await asyncio.to_thread(build_web_app, project.workspace_path)
+        except Exception as exc:  # noqa: BLE001 - build must not crash the run
+            logger.warning("build raised: %s", exc)
+            return
+        if not result.attempted:
+            return
+        from level5.models import TestResult
+
+        project.tests.append(
+            TestResult(
+                suite="build",
+                name=result.command or "npm run build",
+                status="passed" if result.succeeded else "failed",
+                message=(result.output or "")[-800:],
+            )
+        )
+        await self._emit(
+            project,
+            "build",
+            f"Frontend build {'succeeded' if result.succeeded else 'failed'}"
+            + (f" -> {result.dist_dir}" if result.dist_dir else ""),
+            succeeded=result.succeeded,
+            command=result.command,
+        )
+
     async def _integrate(self, project: Project) -> None:
-        """Write the project report and refresh the artifact list."""
+        """Build the app, write the project report, refresh artifacts."""
+        await self._build_deliverable(project)
+
         workspace = Path(project.workspace_path)
         report_path = workspace / "LEVEL5_REPORT.md"
         report_path.write_text(self._render_report(project), encoding="utf-8")

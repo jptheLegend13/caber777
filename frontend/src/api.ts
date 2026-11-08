@@ -88,6 +88,14 @@ export const api = {
   caberScene: (id: string) => request<Scene>(`/projects/${id}/caber/scene`),
   caberValidation: (id: string) => request<ValidationReport>(`/projects/${id}/caber/validation`),
 
+  previewStatus: (id: string) =>
+    request<{
+      available: boolean;
+      preview_url: string | null;
+      package_dir: string | null;
+      build: { status: string; name: string; message?: string } | null;
+    }>(`/projects/${id}/preview/status`),
+
   streamUrl: (id: string) => `${BASE}/projects/${id}/stream`,
 };
 

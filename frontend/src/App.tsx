@@ -56,6 +56,12 @@ export default function App() {
   const [filePath, setFilePath] = useState("");
   const [fileContent, setFileContent] = useState<{ type: string; entries?: any[]; content?: string } | null>(null);
   const [editInstruction, setEditInstruction] = useState("");
+  const [preview, setPreview] = useState<{
+    available: boolean;
+    preview_url: string | null;
+    package_dir: string | null;
+    build: { status: string; name: string; message?: string } | null;
+  } | null>(null);
   const unsubRef = useRef<(() => void) | null>(null);
 
   const appendTranscript = useCallback((text: string) => {
@@ -94,12 +100,18 @@ export default function App() {
           .then((r) => setProject(r.project))
           .catch(() => undefined);
       }
+      // A build result changes whether a preview is available.
+      if (event.kind === "build" || event.kind === "delivered" || event.kind === "failed") {
+        api.previewStatus(id).then(setPreview).catch(() => undefined);
+      }
     });
     // Load any existing 3D scene / validation for CABER projects.
     if (loaded.specification.caber_module === "C" || loaded.specification.domain === "architecture_3d") {
       api.caberScene(id).then(setScene).catch(() => setScene(null));
       api.caberValidation(id).then(setValidation).catch(() => setValidation(null));
     }
+    // Load web-app build/preview state for application projects.
+    api.previewStatus(id).then(setPreview).catch(() => setPreview(null));
   }, []);
 
   useEffect(() => () => unsubRef.current?.(), []);
@@ -279,7 +291,7 @@ export default function App() {
               <div className="mode-hint">{MODE_HINT[project.status]}</div>
 
               <nav className="tabs">
-                {(["overview", "research", "activity", "files", ...(isCaber ? ["preview"] : []), "tests", "output"] as Tab[]).map(
+                {(["overview", "research", "activity", "files", "preview", "tests", "output"] as Tab[]).map(
                   (name) => (
                     <button key={name} className={tab === name ? "active" : ""} onClick={() => setTab(name)}>
                       {name}
@@ -299,20 +311,29 @@ export default function App() {
                   onOpen={loadFile}
                 />
               )}
-              {tab === "preview" && (
-                <PreviewTab
-                  scene={scene}
-                  validation={validation}
-                  selected={selectedPrimitive}
-                  onSelect={(id) => setSelectedPrimitive(id)}
-                  viewMode={viewMode}
-                  onViewMode={setViewMode}
-                  editInstruction={editInstruction}
-                  onEditInstruction={setEditInstruction}
-                  onSendEdit={sendEdit}
-                  viewerUrl={project ? `/api/projects/${project.id}/caber/viewer` : "#"}
-                />
-              )}
+              {tab === "preview" &&
+                (isCaber ? (
+                  <PreviewTab
+                    scene={scene}
+                    validation={validation}
+                    selected={selectedPrimitive}
+                    onSelect={(id) => setSelectedPrimitive(id)}
+                    viewMode={viewMode}
+                    onViewMode={setViewMode}
+                    editInstruction={editInstruction}
+                    onEditInstruction={setEditInstruction}
+                    onSendEdit={sendEdit}
+                    viewerUrl={project ? `/api/projects/${project.id}/caber/viewer` : "#"}
+                  />
+                ) : (
+                  <WebPreviewTab
+                    project={project}
+                    status={preview}
+                    onRefresh={() =>
+                      api.previewStatus(project.id).then(setPreview).catch(() => undefined)
+                    }
+                  />
+                ))}
               {tab === "tests" && <TestsTab project={project} />}
               {tab === "output" && <OutputTab project={project} />}
             </>
@@ -623,6 +644,81 @@ function FilesTab({
           <pre className="code-view">{fileContent.content}</pre>
         ) : (
           <p className="empty-note">Select a file to view its contents.</p>
+        )}
+      </section>
+    </div>
+  );
+}
+
+function WebPreviewTab({
+  project,
+  status,
+  onRefresh,
+}: {
+  project: Project;
+  status: {
+    available: boolean;
+    preview_url: string | null;
+    package_dir: string | null;
+    build: { status: string; name: string; message?: string } | null;
+  } | null;
+  onRefresh: () => void;
+}) {
+  const [nonce, setNonce] = useState(0);
+  const build = status?.build ?? null;
+  return (
+    <div className="grid preview-grid">
+      <section className="panel viewport-panel">
+        <div className="panel-head">
+          <h3>Browser preview</h3>
+          <div className="view-controls">
+            <button
+              onClick={() => {
+                onRefresh();
+                setNonce((n) => n + 1);
+              }}
+            >
+              Reload
+            </button>
+            {status?.available && (
+              <a href={`/api/projects/${project.id}/preview/`} target="_blank" rel="noreferrer noopener">
+                Open in new tab
+              </a>
+            )}
+          </div>
+        </div>
+        {status?.available ? (
+          <iframe
+            key={nonce}
+            title="app preview"
+            src={`/api/projects/${project.id}/preview/`}
+            style={{ width: "100%", height: "70vh", border: "1px solid var(--border)", borderRadius: 8, background: "#fff" }}
+          />
+        ) : (
+          <p className="empty-note">
+            No built web app yet. The preview appears after the frontend build succeeds.
+          </p>
+        )}
+      </section>
+      <section className="panel">
+        <h3>Build</h3>
+        {build ? (
+          <dl className="kv">
+            <dt>Status</dt>
+            <dd className={build.status === "passed" ? "pass" : "fail"}>{build.status}</dd>
+            <dt>Command</dt>
+            <dd>{build.name}</dd>
+            <dt>Package</dt>
+            <dd>{status?.package_dir ?? "—"}</dd>
+          </dl>
+        ) : (
+          <p className="empty-note">No build has been run for this project.</p>
+        )}
+        {build?.message && (
+          <>
+            <h4>Build output</h4>
+            <pre className="log">{build.message}</pre>
+          </>
         )}
       </section>
     </div>

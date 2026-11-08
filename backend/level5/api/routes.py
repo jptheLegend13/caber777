@@ -331,6 +331,52 @@ async def caber_validation(project_id: str) -> dict[str, Any]:
     return report.as_dict()
 
 
+@router.get("/projects/{project_id}/preview/status")
+async def preview_status(project_id: str) -> dict[str, Any]:
+    """Whether a built web app is available to preview, and its build state."""
+    from level5.preview import detect_web_app, static_preview_dir
+
+    project = await _load(project_id)
+    dist = static_preview_dir(project.workspace_path)
+    app = detect_web_app(project.workspace_path)
+    build_tests = [t for t in project.tests if t.suite == "build"]
+    return {
+        "available": dist is not None,
+        "preview_url": f"/api/projects/{project.id}/preview/" if dist else None,
+        "package_dir": str(app.package_dir) if app else None,
+        "build": build_tests[-1].model_dump() if build_tests else None,
+    }
+
+
+@router.get("/projects/{project_id}/preview/{asset_path:path}")
+async def preview_asset(project_id: str, asset_path: str = "") -> Any:
+    """Serve the built static app for the browser preview.
+
+    Only files inside the build output directory are served; path traversal is
+    rejected. Unknown routes fall back to index.html so client-side routing in
+    a single-page app works in the preview.
+    """
+    from level5.preview import static_preview_dir
+
+    project = await _load(project_id)
+    dist = static_preview_dir(project.workspace_path)
+    if dist is None:
+        raise HTTPException(status_code=404, detail="no built web app to preview")
+
+    root = dist.resolve()
+    target = (root / asset_path).resolve() if asset_path else root
+    if target != root and root not in target.parents:
+        raise HTTPException(status_code=400, detail="path escapes preview root")
+    if target.is_dir():
+        target = target / "index.html"
+    if not target.is_file():
+        fallback = root / "index.html"
+        if fallback.is_file():
+            return FileResponse(fallback, media_type="text/html")
+        raise HTTPException(status_code=404, detail="asset not found")
+    return FileResponse(target)
+
+
 @router.get("/projects/{project_id}/caber/viewer")
 async def caber_viewer(project_id: str) -> FileResponse:
     project = await _load(project_id)
