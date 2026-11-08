@@ -158,3 +158,26 @@ token module. A class not backed by a Meridian token simply does not exist.
 - The `preview` tab only appears for CABER (module C) projects.
 - SQLite is used for local persistence; `LEVEL5_DATA_DIR` overrides the data
   directory (tests point it at a tmp dir).
+- The model gateway can return HTTP 504 `Agent run timed out` under load. That
+  is transient: tasks retry it. It is not a task defect, so do not "fix" a task
+  because of it.
+- Review-only roles never own an acceptance criterion. A reviewer task lists
+  every criterion, so letting it be the evidence owner reports universal
+  satisfaction without producing anything.
+- Retry only transient faults. Retrying a failed test or a syntax error burns
+  budget and hides the defect.
+- The Agent Server serves one model gateway. Running a second long project
+  concurrently with the first starves the gateway and produces 504s.
+
+## Session notes
+
+- Verification honesty is enforced in `_verify`: a criterion is satisfied only
+  when a succeeded non-review task actually addresses it. Pinned by
+  `tests/test_verification.py`.
+- Task retries are pinned by `tests/test_retries.py` (transient vs permanent).
+- Real run outcomes, including failures, are recorded in `docs/RUNS.md`. Update
+  it after any acceptance run rather than only noting successes.
+- `docs/ROADMAP.md` uses `[x]` done, `[~]` partial, `[ ]` not started. Keep it
+  accurate; the founder relies on it.
+- The backend must be restarted to pick up code changes (uvicorn is not started
+  with `--reload` in this environment).
