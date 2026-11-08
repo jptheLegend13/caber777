@@ -1,0 +1,19 @@
+# LEVEL 5 backend dependencies
+# OpenHands SDK pinned to the running Agent Server version (1.60.1).
+# Other packages float to versions compatible with the SDK; see requirements.lock.txt
+openhands-sdk==1.60.1
+openhands-tools==1.60.1
+fastapi
+uvicorn[standard]
+pydantic
+pydantic-settings
+httpx
+aiofiles
+python-multipart
+sse-starlette
+websockets
+aiosqlite
+pytest
+pytest-asyncio
+numpy
+trimesh
