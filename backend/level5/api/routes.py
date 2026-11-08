@@ -355,6 +355,31 @@ async def list_improvements(limit: int = 100) -> dict[str, Any]:
     return {"items": items, "count": len(items)}
 
 
+@router.post("/improvements/analyse")
+async def analyse_improvements(min_samples: int = 3) -> dict[str, Any]:
+    """Detect measured weaknesses and draft screened proposals.
+
+    This never applies a change. It records proposals for review.
+    """
+    from level5.self_improvement import SelfImprovementEngine
+
+    engine = SelfImprovementEngine()
+    weaknesses = await engine.detect_weaknesses(min_samples=min_samples)
+    proposals = []
+    for weakness in weaknesses:
+        proposal = await engine.propose(weakness)
+        await engine.record(proposal)
+        proposals.append(proposal.as_dict())
+    return {
+        "weaknesses": [w.as_dict() for w in weaknesses],
+        "proposals": proposals,
+        "note": (
+            "Proposals are recorded for review only. Nothing is applied "
+            "automatically, and proposals that weaken safety controls are rejected."
+        ),
+    }
+
+
 # --------------------------------------------------------------------------- #
 # Helpers
 # --------------------------------------------------------------------------- #

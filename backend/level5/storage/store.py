@@ -8,6 +8,7 @@ it lets an unfinished project resume after a restart.
 from __future__ import annotations
 
 import json
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -157,6 +158,8 @@ class ProjectStore:
     # -- improvement records (self-improvement loop) ------------------------ #
     async def save_improvement(self, record: dict[str, Any]) -> None:
         await self.init()
+        record = dict(record)
+        record.setdefault("id", f"imp_{uuid.uuid4().hex[:12]}")
         async with aiosqlite.connect(self.db_path) as db:
             await db.execute(
                 """
@@ -190,6 +193,8 @@ class ProjectStore:
     # -- benchmark records -------------------------------------------------- #
     async def save_benchmark(self, record: dict[str, Any]) -> None:
         await self.init()
+        record = dict(record)
+        record.setdefault("id", f"bench_{uuid.uuid4().hex[:12]}")
         async with aiosqlite.connect(self.db_path) as db:
             await db.execute(
                 """
