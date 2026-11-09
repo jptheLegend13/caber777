@@ -135,14 +135,14 @@ class Orchestrator:
         project: Project,
         *,
         request: str | None = None,
-        do_research: bool | None = None,
     ) -> Project:
-        """Understand the request, optionally research, and set the spec.
+        """Understand the request and set the structured specification.
 
-        Split out from :meth:`understand_and_plan` so the run pipeline can
-        inspect the classified CABER module and route to a specialist engine
-        (building creation, problem solving) instead of always planning a
-        generic task graph.
+        Deliberately stops at the specification (no research, no plan). The run
+        pipeline inspects the classified CABER module straight after this and
+        routes building and novel-idea requests to their specialist engines,
+        which perform their own research and planning. Running the generic
+        research here first would duplicate that work and delay the route.
         """
         text = request or project.original_request
         await self._emit(project, "phase", "Understanding the request", phase="understanding")
@@ -151,6 +151,7 @@ class Orchestrator:
         project.specification = spec
         project.name = project.name or _derive_name(text)
         project.status = ProjectStatus.PLANNING
+        self._research_context = ""
         await self._emit(
             project,
             "specification",
@@ -159,11 +160,16 @@ class Orchestrator:
             module=spec.caber_module.value,
             requirements=len(spec.requirements),
         )
+        await self._persist(project)
+        return project
 
+    async def research(self, project: Project, *, do_research: bool | None = None) -> Project:
+        """Investigate the specification's research questions, if warranted."""
+        spec = project.specification
+        if spec is None:
+            return project
+        should_research = spec.research_needed if do_research is None else do_research
         research_context = ""
-        should_research = (
-            spec.research_needed if do_research is None else do_research
-        )
         if should_research and spec.research_questions:
             project.status = ProjectStatus.RESEARCHING
             await self._emit(
@@ -213,8 +219,9 @@ class Orchestrator:
         request: str | None = None,
         do_research: bool | None = None,
     ) -> Project:
-        """Understand the request, optionally research, then build the graph."""
-        await self.understand(project, request=request, do_research=do_research)
+        """Understand, research, then build the graph (the generic path)."""
+        await self.understand(project, request=request)
+        await self.research(project, do_research=do_research)
         return await self.plan(project)
 
     # ------------------------------------------------------------------ #

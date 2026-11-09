@@ -720,10 +720,11 @@ async def _run_full_pipeline(project_id: str, research: bool | None) -> None:
             await _orchestrator.execute(project)
             return
 
-        project = await _orchestrator.understand(project, do_research=research)
+        project = await _orchestrator.understand(project)
         module = project.specification.caber_module
         if module == CABERModule.BUILDING:
-            # Building requests go to the dedicated 3D creation intelligence.
+            # Building requests go to the dedicated 3D creation intelligence,
+            # which performs its own architectural understanding and validation.
             from level5.caber.service import CABERBuildingService
 
             project = await CABERBuildingService().build(project)
@@ -741,6 +742,7 @@ async def _run_full_pipeline(project_id: str, research: bool | None) -> None:
             await get_store().save(project)
             return
 
+        await _orchestrator.research(project, do_research=research)
         await _orchestrator.plan(project)
         await _orchestrator.execute(project)
     except asyncio.CancelledError:
