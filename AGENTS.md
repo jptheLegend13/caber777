@@ -197,3 +197,22 @@ token module. A class not backed by a Meridian token simply does not exist.
   text (`text-primary-text`); never use `text-primary`. Likewise raw status
   fills (e.g. `text-warning` = warning-500, 2.35:1 on white) fail the 3:1
   non-text bar as glyphs — use the `*-subtle-fg` variants on surfaces.
+- **TaskFlow persistence layer** lives under
+  `.level5-data/projects/proj_6128c135609c/backend` (SQLAlchemy models, Alembic
+  migrations `0001_init`…`0006_rls`, tenant-scoped repositories, seed script).
+  It implements `docs/data-model.md` exactly. Verify with:
+  `cd .../backend && DATABASE_URL=... .venv/bin/alembic upgrade head &&
+  .venv/bin/python -m scripts.seed --reset && .venv/bin/python -m pytest -q`
+  (61 tests). Needs a PostgreSQL instance; the suite uses `taskflow_test` and
+  `taskflow_test_mig` databases. `alembic check` must report "No new upgrade
+  operations detected".
+- RLS gotcha: `memberships`, `tasks`, `audit_events` have `FORCE ROW LEVEL
+  SECURITY`, so plain `psql`/raw queries with no `app.current_tenant` GUC see
+  zero rows. Tests and the seed set the GUC via `tenant_transaction(...)`.
+- The append-only guard on `audit_events` (trigger + REVOKE) blocks cascade
+  deletes of tenants; the seed's `--reset` and tenant offboarding set the
+  session-local `app.audit_maintenance='on'` escape.
+- Alembic naming convention: pass **short** check-constraint names
+  (`name="status_valid"`) in migrations/models — the `ck_%(table)s_%(name)s`
+  convention adds the `ck_<table>_` prefix. Passing an already-prefixed name
+  double-prefixes it.

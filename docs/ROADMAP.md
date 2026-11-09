@@ -97,8 +97,20 @@ inspect role allocation and dependency chains):
   approval gate, applies self-modification to production, exposes credentials
   or creates agents recursively. Each proposal must name its tests and its
   before/after comparison.
-- [ ] Independent review and accept/reject decision by a separate reviewer agent
-  (the review step currently requires a human decision).
+- [x] Independent review and accept/reject decision by a separate reviewer agent:
+  `SelfImprovementEngine.review` is a distinct, adversarial agent call that may
+  only ever reject a proposal the deterministic screen already rejected, and it
+  never accepts a proposal with no tests or comparison plan. Acceptance
+  authorises isolated implementation behind its tests, never deployment.
+  Verified live: the reviewer rejected a plausible-sounding retry proposal
+  because its comparison plan was statistically meaningless and its idempotency
+  risk was unexamined.
+- [x] Innovation-to-prototype engine (§13): a novel idea is investigated (prior
+  art via real retrieval, technical gap, feasibility, alternatives), a
+  falsifiable hypothesis is formed, a prototype is generated and *actually
+  executed* by the shared sandboxed runner, and the run is evaluated with honest
+  confidence and limitations. Reachable from the command box, which routes
+  novel-idea requests to it (see `tests/test_routing.py`).
 - [ ] The competitive benchmark suite: a fixed set of equivalent tasks run
   against comparable systems under the same model and hardware. **Not run.**
   No superiority claim is made anywhere in this platform.

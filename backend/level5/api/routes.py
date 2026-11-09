@@ -565,10 +565,14 @@ async def list_improvements(limit: int = 100) -> dict[str, Any]:
 
 
 @router.post("/improvements/analyse")
-async def analyse_improvements(min_samples: int = 3) -> dict[str, Any]:
+async def analyse_improvements(
+    min_samples: int = 3, review: bool = True
+) -> dict[str, Any]:
     """Detect measured weaknesses and draft screened proposals.
 
-    This never applies a change. It records proposals for review.
+    With ``review`` (the default), a separate independent reviewer agent decides
+    accept or reject for each proposal. Nothing is ever applied: acceptance
+    authorises implementation in isolation behind its tests, never deployment.
     """
     from level5.self_improvement import SelfImprovementEngine
 
@@ -577,14 +581,18 @@ async def analyse_improvements(min_samples: int = 3) -> dict[str, Any]:
     proposals = []
     for weakness in weaknesses:
         proposal = await engine.propose(weakness)
+        if review:
+            proposal = await engine.review(proposal, weaknesses=weaknesses)
         await engine.record(proposal)
         proposals.append(proposal.as_dict())
     return {
         "weaknesses": [w.as_dict() for w in weaknesses],
         "proposals": proposals,
+        "reviewed": review,
         "note": (
             "Proposals are recorded for review only. Nothing is applied "
-            "automatically, and proposals that weaken safety controls are rejected."
+            "automatically, and proposals that weaken safety controls are rejected "
+            "by a deterministic screen and by an independent reviewer."
         ),
     }
 

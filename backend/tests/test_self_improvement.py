@@ -108,3 +108,64 @@ class TestDetection:
         engine = SelfImprovementEngine(store=store)
         engine.llm = object()
         assert await engine.detect_weaknesses(min_samples=3) == []
+
+
+class _ReviewerLLM:
+    """Returns a canned reviewer decision and records the prompts it saw."""
+
+    def __init__(self, decision: str, confidence: str = "medium") -> None:
+        self.decision = decision
+        self.confidence = confidence
+        self.calls: list[str] = []
+
+    async def chat_json(self, messages, *, temperature=0.2, max_tokens=1000):
+        self.calls.append(messages[0]["content"])
+        return {"decision": self.decision, "reason": "because", "confidence": self.confidence}, None
+
+
+class TestIndependentReview:
+    async def test_reviewer_can_accept(self, store):
+        engine = SelfImprovementEngine(store=store)
+        engine.llm = _ReviewerLLM("accept", "high")
+        proposal = await engine.review(_proposal(), weaknesses=[])
+        assert proposal.status == "accepted"
+        assert proposal.review["decision"] == "accept"
+        assert proposal.review["confidence"] == "high"
+
+    async def test_reviewer_can_reject(self, store):
+        engine = SelfImprovementEngine(store=store)
+        engine.llm = _ReviewerLLM("reject")
+        proposal = await engine.review(_proposal(), weaknesses=[])
+        assert proposal.status == "rejected"
+        assert proposal.rejection_reason
+
+    async def test_reviewer_never_revives_a_screened_proposal(self, store):
+        engine = SelfImprovementEngine(store=store)
+        engine.llm = _ReviewerLLM("accept")
+        unsafe = _proposal(change="Disable the security check before deployment.")
+        # The proposer's screen has already rejected it.
+        from level5.self_improvement import screen_proposal as screen
+
+        unsafe.status = "rejected"
+        unsafe.rejection_reason = screen(unsafe)
+        result = await engine.review(unsafe, weaknesses=[])
+        assert result.status == "rejected"
+        assert engine.llm.calls == []  # the model was never consulted
+
+    async def test_reviewer_does_not_accept_untested_proposal(self, store):
+        engine = SelfImprovementEngine(store=store)
+        engine.llm = _ReviewerLLM("accept")
+        result = await engine.review(_proposal(required_tests=[]), weaknesses=[])
+        assert result.status == "rejected"
+        assert engine.llm.calls == []
+
+    async def test_reviewer_failure_is_a_rejection(self, store):
+        class _Boom:
+            async def chat_json(self, *a, **k):
+                raise RuntimeError("reviewer offline")
+
+        engine = SelfImprovementEngine(store=store)
+        engine.llm = _Boom()
+        result = await engine.review(_proposal(), weaknesses=[])
+        assert result.status == "rejected"
+        assert "review failed" in (result.rejection_reason or "")

@@ -251,6 +251,83 @@ class SelfImprovementEngine:
             {**proposal.as_dict(), "recorded_at": datetime.now(timezone.utc).isoformat()}
         )
 
+    # -- independent review ------------------------------------------------- #
+    async def review(self, proposal: Proposal, *, weaknesses: list[Weakness]) -> Proposal:
+        """Have a *separate* reviewer decide accept or reject.
+
+        The reviewer is a distinct agent call with a different mandate from the
+        proposer: its job is to find reasons to reject, and it may never accept
+        a proposal that the deterministic screen already rejected. A proposal
+        with no specified tests or comparison plan is rejected outright without
+        asking the model.
+        """
+        if proposal.status == "rejected":
+            return proposal  # the screen already rejected it; review cannot revive it
+
+        screen_reason = screen_proposal(proposal)
+        if screen_reason:
+            proposal.status = "rejected"
+            proposal.rejection_reason = screen_reason
+            return proposal
+
+        weakness = next(
+            (w for w in weaknesses if w.id == proposal.weakness_id), None
+        )
+        system = (
+            "You are the INDEPENDENT REVIEWER for LEVEL 5's self-improvement loop. "
+            "A proposer has suggested a change to LEVEL 5's own source. Your job is "
+            "to be adversarial and decide whether it should be ACCEPTED for "
+            "implementation or REJECTED. Reject if the change is unverifiable, if its "
+            "tests would not actually exercise the claim, if it weakens security or "
+            "permissions, if it removes or loosens tests, if it applies changes "
+            "automatically to the running system, or if the risk outweighs the "
+            "expected benefit. Acceptance only authorises implementation in isolation "
+            "behind its tests; it never authorises deploying to the live system.\n"
+            'Respond as JSON: {"decision": "accept"|"reject", "reason": str, '
+            '"confidence": "low"|"medium"|"high"}'
+        )
+        user = (
+            f"AREA: {proposal.area}\n"
+            f"HYPOTHESIS: {proposal.hypothesis}\n"
+            f"CHANGE: {proposal.change}\n"
+            f"TARGET FILES: {', '.join(proposal.target_files) or '(none)'}\n"
+            f"REQUIRED TESTS: {', '.join(proposal.required_tests) or '(none)'}\n"
+            f"COMPARISON PLAN: {proposal.comparison_plan}\n"
+            f"RISK: {proposal.risk}\n"
+            + (f"WEAKNESS: {weakness.statement}\n" if weakness else "")
+        )
+        try:
+            data, _ = await self.llm.chat_json(
+                [{"role": "system", "content": system}, {"role": "user", "content": user}],
+                temperature=0.1,
+                max_tokens=1200,
+            )
+        except Exception as exc:  # noqa: BLE001 - an unreviewable proposal is not accepted
+            proposal.status = "rejected"
+            proposal.rejection_reason = f"independent review failed: {exc}"[:300]
+            proposal.review = {"decision": "reject", "reason": str(exc)[:300], "confidence": "low"}
+            return proposal
+
+        decision = str(data.get("decision", "reject")).strip().lower()
+        reason = str(data.get("reason", "")).strip()
+        confidence = str(data.get("confidence", "low")).strip().lower()
+        if decision not in ("accept", "reject"):
+            decision = "reject"
+            reason = reason or "unrecognised reviewer decision"
+        proposal.review = {
+            "decision": decision,
+            "reason": reason,
+            "confidence": confidence if confidence in ("low", "medium", "high") else "low",
+        }
+        if decision == "accept":
+            # Acceptance authorises isolated implementation only.
+            proposal.status = "accepted"
+            proposal.rejection_reason = None
+        else:
+            proposal.status = "rejected"
+            proposal.rejection_reason = reason or "rejected by independent review"
+        return proposal
+
 
 def screen_proposal(proposal: Proposal) -> str | None:
     """Return a rejection reason, or None when the proposal is acceptable."""
