@@ -216,3 +216,19 @@ token module. A class not backed by a Meridian token simply does not exist.
   (`name="status_valid"`) in migrations/models — the `ck_%(table)s_%(name)s`
   convention adds the `ck_<table>_` prefix. Passing an already-prefixed name
   double-prefixes it.
+- **CABER villa design brief** (`proj_38c100961ec0`, task `task_a5b629b2ddc4`):
+  the governing room program / dimensional brief for the two-storey modern
+  villa lives in that project's `docs/room_program.json` (machine-readable,
+  single source of truth for areas + dimensions) and `docs/design_brief.md`
+  (narrative). It is the upstream input to the BIM model, site layout,
+  floor-plan set, area schedule and verification tasks in that project's task
+  graph. Regenerate + verify with:
+  `cd .level5-data/projects/proj_38c100961ec0 &&
+   python3 scripts/build_room_program.py && python3 tests/test_room_program.py`
+  (24 checks). Conventions: x=east, z=north, y=up (matches
+  `level5/caber/models.py`); each storey tiles a 14×10 m footprint with no
+  overlaps; `clear_dimensions` subtract a 0.2 m wall allowance for enclosed
+  rooms only; `ceiling_height_m` is numeric for enclosed spaces and `null`
+  (open to sky) for the terrace/pool/deck. All 13 code/planning items carry
+  `status: UNVERIFIED_HYPOTHESIS` because the project ran with
+  `model_prior_no_retrieval` (no jurisdiction, no sources).

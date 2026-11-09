@@ -29,7 +29,11 @@ that actually run.
 | Independent validation with a published score | working |
 | Live progress streaming (SSE) + file browser | working |
 | Version history and generated report | working |
-| Self-improvement loop, competitive benchmarks | not implemented (see `docs/ROADMAP.md`) |
+| Command box routing to the three CABER intelligences | working |
+| File, image and reference-document attachments | working |
+| Innovation-to-prototype engine (prior art → prototype → evaluation) | working |
+| Self-improvement loop with an independent adversarial reviewer | working |
+| Competitive benchmark suite | scaffolding only — no external system has been run; no superiority claim is made (see `docs/ROADMAP.md`) |
 
 ## Architecture
 
@@ -87,17 +91,29 @@ Then open the app and describe what you want.
 | GET | `/api/projects` | List projects |
 | POST | `/api/projects` | Create a project (optionally auto-start) |
 | GET | `/api/projects/{id}` | Full project state |
-| POST | `/api/projects/{id}/run` | Run or re-run the pipeline |
+| DELETE | `/api/projects/{id}` | Delete a project |
+| POST | `/api/projects/{id}/run` | Run or re-run the pipeline (routes by CABER module) |
+| POST | `/api/projects/{id}/plan` | Understand + plan without executing |
 | POST | `/api/projects/{id}/cancel` | Cancel a running project |
+| GET | `/api/projects/{id}/events` | Event log |
 | GET | `/api/projects/{id}/stream` | SSE activity stream |
 | GET | `/api/projects/{id}/files` | Browse the workspace |
 | GET | `/api/projects/{id}/report` | Generated `LEVEL5_REPORT.md` |
 | POST | `/api/projects/{id}/follow-up` | Send an instruction to the project's agent |
+| GET/POST | `/api/projects/{id}/attachments` | List / upload reference documents and images |
+| DELETE | `/api/projects/{id}/attachments/{aid}` | Remove an attachment |
+| GET | `/api/projects/{id}/preview/status`, `/preview/{path}` | Web-app preview |
 | POST | `/api/solve` | Problem-Solving Intelligence (CABER B) |
+| POST | `/api/innovate` | Innovation-to-prototype pipeline |
 | POST | `/api/caber/buildings` | Building Creation Intelligence (CABER C) |
+| GET | `/api/projects/{id}/caber/spec` | Three-block architectural specification |
 | GET | `/api/projects/{id}/caber/scene` | Generated 3D scene graph |
 | GET | `/api/projects/{id}/caber/viewer` | Standalone 3D viewer |
 | GET | `/api/projects/{id}/caber/validation` | Validation report |
+| GET | `/api/agents`, `/api/agents/{name}` | Specialist roles |
+| GET | `/api/providers` | Model / provider registry |
+| GET/POST | `/api/improvements`, `/api/improvements/analyse` | Self-improvement loop |
+| GET/POST | `/api/benchmarks`, `/api/benchmarks/suite*` | Self-benchmarks and the competitive suite |
 
 Interactive docs: `/docs`.
 
