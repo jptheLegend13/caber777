@@ -408,6 +408,11 @@ export default function App() {
                   text="Design a modern two-storey villa with three bedrooms, open-plan living, a study, a terrace and a pool."
                   onUse={setCommand}
                 />
+                <ExampleCard
+                  title="Innovation"
+                  text="Investigate a novel self-tuning cache replacement policy that adapts its recency/frequency weighting online, research the prior art, and prototype it to test whether it beats LRU on skewed traces."
+                  onUse={setCommand}
+                />
               </div>
             </section>
           )}
