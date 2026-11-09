@@ -123,6 +123,35 @@ def test_derive_name_uses_first_line():
     assert _derive_name("Build a CRM\nwith more detail") == "Build a CRM"
 
 
+class TestResearchEngineAccess:
+    """The research step must call the engine, not itself.
+
+    A method named `research` on the orchestrator shadows the `self.research`
+    ResearchEngine attribute, so the generic path crashed with
+    `'ResearchEngine' object is not callable`. The step is named `run_research`
+    to keep the engine reachable.
+    """
+
+    async def test_run_research_calls_the_engine(self, tmp_path, monkeypatch):
+        from level5.orchestrator import Orchestrator
+        from level5.models import Project, Specification
+
+        orch = Orchestrator(agent_client=_FakeAgent())
+        calls: list[list[str]] = []
+
+        async def fake_investigate(questions):
+            calls.append(list(questions))
+            return []
+
+        monkeypatch.setattr(orch.research, "investigate_many", fake_investigate)
+        project = Project(name="t", original_request="r")
+        project.specification = Specification(
+            deliverable="d", research_needed=True, research_questions=["q1", "q2"]
+        )
+        await orch.run_research(project)
+        assert calls == [["q1", "q2"]]
+
+
 class TestProblemSolverExecution:
     """The model runner executes real Python and captures real output."""
 

@@ -163,7 +163,9 @@ class Orchestrator:
         await self._persist(project)
         return project
 
-    async def research(self, project: Project, *, do_research: bool | None = None) -> Project:
+    async def run_research(
+        self, project: Project, *, do_research: bool | None = None
+    ) -> Project:
         """Investigate the specification's research questions, if warranted."""
         spec = project.specification
         if spec is None:
@@ -221,7 +223,7 @@ class Orchestrator:
     ) -> Project:
         """Understand, research, then build the graph (the generic path)."""
         await self.understand(project, request=request)
-        await self.research(project, do_research=do_research)
+        await self.run_research(project, do_research=do_research)
         return await self.plan(project)
 
     # ------------------------------------------------------------------ #

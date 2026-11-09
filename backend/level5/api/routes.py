@@ -742,7 +742,7 @@ async def _run_full_pipeline(project_id: str, research: bool | None) -> None:
             await get_store().save(project)
             return
 
-        await _orchestrator.research(project, do_research=research)
+        await _orchestrator.run_research(project, do_research=research)
         await _orchestrator.plan(project)
         await _orchestrator.execute(project)
     except asyncio.CancelledError:

@@ -75,7 +75,7 @@ class TestPipelineDispatch:
             return proj
 
         monkeypatch.setattr(routes._orchestrator, "understand", fake_understand)
-        monkeypatch.setattr(routes._orchestrator, "research", fake_research)
+        monkeypatch.setattr(routes._orchestrator, "run_research", fake_research)
         monkeypatch.setattr(routes._orchestrator, "plan", fake_plan)
         monkeypatch.setattr(routes._orchestrator, "execute", fake_execute)
         monkeypatch.setattr(routes, "get_store", lambda: store)
