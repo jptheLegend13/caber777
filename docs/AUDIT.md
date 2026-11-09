@@ -151,6 +151,20 @@ for a short window after an observed failure; an explicit `gateway` transport
 still attempts it, so the failure is surfaced rather than hidden. Covered by
 `tests/test_llm_transport.py`.
 
+### F11 — CABER validation was lost on restart (severity: medium) — **FIXED and live-verified**
+
+`GET /caber/validation` read only the in-memory CABER service, which is empty
+after a backend restart. A delivered building therefore 404'd on its own
+validation even though the run had written `validation.json` to the workspace —
+contradicting the §15 requirement that work survives a restart. The `spec` and
+`scene` routes already had disk fallbacks; `validation` did not. Fix: added
+`_load_validation` and used it as a fallback, matching the other two routes.
+
+Live-verified: after a fresh backend start the endpoint returned
+`score: 100.0, passed: true, 12 checks, 255 primitives` for the delivered villa
+(`proj_c7c9a0431af6`) instead of 404. Covered by
+`test_caber_validation_falls_back_to_disk_after_restart` in `tests/test_api.py`.
+
 ## 3. Capability classification
 
 ### Platform / control plane
@@ -228,7 +242,7 @@ still attempts it, so the failure is surfaced rather than hidden. Covered by
 
 ## 4. Test suite
 
-`backend/.venv/bin/python -m pytest -q` → **202 passed** (this cycle: 179 → 202;
+`backend/.venv/bin/python -m pytest -q` → **204 passed** (this cycle: 179 → 204;
 added `test_benchmark_suite.py`, `test_llm_transport.py`, `test_worktrees.py`,
 dispatch and regression tests). The suite replaces only the network boundary in orchestrator
 tests and states that in the module.

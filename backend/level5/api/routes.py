@@ -495,10 +495,10 @@ async def caber_scene(project_id: str) -> JSONResponse:
 
 @router.get("/projects/{project_id}/caber/validation")
 async def caber_validation(project_id: str) -> dict[str, Any]:
-    report = _caber.report(project_id)
+    report = _caber.report(project_id) or await _load_validation(project_id)
     if report is None:
         raise HTTPException(status_code=404, detail="no validation for this project")
-    return report.as_dict()
+    return report if isinstance(report, dict) else report.as_dict()
 
 
 @router.get("/projects/{project_id}/preview/status")
@@ -796,6 +796,25 @@ async def _load_spec(project_id: str):
     if not path.exists():
         return None
     return BuildingSpec.model_validate_json(path.read_text(encoding="utf-8"))
+
+
+async def _load_validation(project_id: str) -> dict[str, Any] | None:
+    """Read a persisted validation report from disk.
+
+    The in-memory CABER service is lost when the backend restarts, but the run
+    wrote ``validation.json`` to the project workspace. Without this fallback a
+    delivered building 404s on its validation after any restart.
+    """
+    project = await get_store().get(project_id)
+    if project is None:
+        return None
+    path = Path(project.workspace_path) / "validation.json"
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (ValueError, OSError):
+        return None
 
 
 def _read_text(path: Path, limit: int = 200_000) -> str:

@@ -114,6 +114,38 @@ def test_caber_scene_missing_for_non_building_project(client):
     assert client.get(f"/api/projects/{created['id']}/caber/scene").status_code == 404
 
 
+def test_caber_validation_falls_back_to_disk_after_restart(client, settings):
+    """A delivered building's validation must survive a backend restart.
+
+    The in-memory CABER service loses its report when the process restarts; the
+    run persisted ``validation.json`` to the workspace, so the endpoint must read
+    it back rather than 404. Regression for the restart-persistence gap (F10).
+    """
+    created = client.post(
+        "/api/projects", json={"request": "villa validation", "auto_start": False}
+    ).json()["project"]
+    workspace = settings.projects_dir / created["id"]
+    workspace.mkdir(parents=True, exist_ok=True)
+    report = {
+        "passed": True,
+        "score": 100.0,
+        "checks": [{"name": "rooms_present", "passed": True, "detail": "1 room"}],
+        "stats": {"primitives": 12},
+    }
+    (workspace / "validation.json").write_text(json.dumps(report), encoding="utf-8")
+
+    response = client.get(f"/api/projects/{created['id']}/caber/validation")
+    assert response.status_code == 200
+    assert response.json()["score"] == 100.0
+
+
+def test_caber_validation_missing_without_file(client):
+    created = client.post(
+        "/api/projects", json={"request": "no validation", "auto_start": False}
+    ).json()["project"]
+    assert client.get(f"/api/projects/{created['id']}/caber/validation").status_code == 404
+
+
 def test_events_endpoint_returns_creation_event(client):
     created = client.post(
         "/api/projects", json={"request": "events test", "auto_start": False}
