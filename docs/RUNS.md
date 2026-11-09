@@ -166,19 +166,42 @@ Each plan produced a real dependency chain (e.g. the mobile plan: architecture �
 backend API → mobile foundation → secure credential storage → offline sync
 engine → native integrations).
 
+## Run 5 — final capability audit (this cycle)
+
+Live re-verification of each CABER intelligence and the platform fixes, against
+the running backend (`:12000`) and Agent Server (`:60000`). Every item below was
+observed this cycle, not carried over from a previous one.
+
+| Check | Method | Result |
+|---|---|---|
+| CABER building (Intelligence C) | `GET /api/projects/proj_c7c9a0431af6/caber/{spec,validation,viewer}` | Villa spec: 11 rooms, 56 objects, 35 openings, 2 floors; validation 12/12, score 100.0, 255 primitives; viewer 200, 85 KB |
+| CABER validation survives restart (F11) | fresh backend on `:12099`, then `GET /caber/validation` | 200 with the persisted report (was 404 before the fix) |
+| Problem-solving (Intelligence B) | M/M/1 queue project `proj_20f47c55b319` | `delivered`; `solution.json` with restatement, approach and computation |
+| Innovation pipeline (§13) | `POST /api/innovate` (self-tuning cache) | `delivered`; `innovation.json` + `prototype.py`; confidence **low**, feasibility **uncertain**, with four explicit limitations (3 seeds, no significance test, LRU-only baseline, small stationary traces) |
+| Application creation (Intelligence A) | enterprise task-manager run `proj_6128c135609c` | 3/10 tasks succeeded so far; backend task conversation live and `running` on the Agent Server |
+| Event pagination (F5) | `get_all_events` over the 8 busiest conversations | 592, 374, 191, 152 … events walked with **zero duplicate ids** |
+| Per-task worktree isolation (F3) | real agent conversation, `LEVEL5_TASK_WORKTREES=1` | agent ran in `.level5-worktrees/<task>`; `hello.txt` merged into the shared workspace and committed; worktree removed |
+| Agent registry | `GET /api/agents` | 38 roles across 6 disciplines (software 12, ai 6, graphics 6, quality 6, leadership 4, research 4) |
+| Provider adapters | `GET /api/providers` | openhands (managed, available), openai, anthropic, google, and open-weight/local entries |
+| Benchmark suite | `GET /api/benchmarks/suite{,/results}` | suite v1.0.0 defined; results **empty** — no run recorded, and missing runs are not scored as passes or failures |
+
+Honest status: the enterprise task-manager run is still in progress and is **not
+delivered**. No cross-system benchmark has been run.
+
 ## Test suite
 
 ```
 cd backend && .venv/bin/python -m pytest -q
-138 passed
+204 passed
 ```
 
 Coverage: domain model and storage, agent registry (38 roles), CABER geometry
-and validation, orchestrator scheduling and failure propagation, honest
+and validation, orchestrator scheduling and failure propagation, per-task
+worktree isolation (including the real merge-conflict fallback), honest
 acceptance-criteria verification, self-improvement screening, real
-problem-solver code execution, and API integration. The only network boundary
-replaced in any test is the Agent Server client in the orchestrator tests, and
-that test module says so.
+problem-solver code execution, event paging, and API integration. The only
+network boundary replaced in any test is the Agent Server client in the
+orchestrator tests, and that test module says so.
 
 ---
 
