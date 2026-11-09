@@ -27,6 +27,7 @@ backend/level5/
   models.py            domain model: Project, Specification, Task, TaskGraph, …
   events.py            in-process pub/sub bus for SSE streaming
   orchestrator.py      understand → plan → execute → verify → deliver
+  worktrees.py         per-task git worktree isolation (opt-in)
   agents/registry.py   38 specialist roles, 6 disciplines
   intelligence/        understanding.py, planner.py, research.py, problem_solving.py
   caber/               models.py (3 blocks), architect.py, geometry.py, validator.py, service.py
@@ -168,6 +169,27 @@ token module. A class not backed by a Meridian token simply does not exist.
   budget and hides the defect.
 - The Agent Server serves one model gateway. Running a second long project
   concurrently with the first starves the gateway and produces 504s.
+- **A method on `Orchestrator` must not share a name with an engine attribute.**
+  A step named `research` shadowed `self.research` (the `ResearchEngine`) and
+  broke every generic run with `'ResearchEngine' object is not callable`. The
+  step is `run_research`; pinned by a regression test in
+  `tests/test_orchestrator.py`.
+- Routing runs **before** generic research: `_run_full_pipeline` classifies the
+  CABER module and dispatches buildings to `CABERBuildingService` and novel
+  ideas to the innovation pipeline immediately, so a building request does not
+  first burn minutes on web research. Only the generic path runs
+  `run_research` → `plan` → `execute`.
+- Attachments are read into request understanding: `_extract_text_excerpt` keeps
+  a bounded text sample of text-like uploads, and any requirement it yields is
+  tagged `origin: "user"` (never `inferred`). Uploads are stored under the
+  project's `attachments/` dir with a sanitised basename, so a
+  `../../etc/evil.txt` filename cannot escape.
+- `LEVEL5_TASK_WORKTREES=1` isolates each task in its own git worktree
+  (`level5/worktrees.py`). The project workspace is `git init`-ed on first use
+  with a `.gitignore` for `node_modules/`, `dist/`, `.venv/` and friends; the
+  branch is squash-merged back under a lock, and a conflict falls back to
+  copying the task's changed files. Off by default; when isolation cannot be set
+  up the task runs in the shared workspace and a `task_isolation` event says so.
 
 ## Session notes
 
