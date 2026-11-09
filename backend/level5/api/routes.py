@@ -617,8 +617,31 @@ async def _run_full_pipeline(project_id: str, research: bool | None) -> None:
         # away completed work instead of continuing it (Section 15).
         if project.task_graph.tasks:
             _orchestrator.prepare_resume(project)
-        else:
-            project = await _orchestrator.understand_and_plan(project, do_research=research)
+            await _orchestrator.execute(project)
+            return
+
+        project = await _orchestrator.understand(project, do_research=research)
+        module = project.specification.caber_module
+        if module == CABERModule.BUILDING:
+            # Building requests go to the dedicated 3D creation intelligence.
+            from level5.caber.service import CABERBuildingService
+
+            project = await CABERBuildingService().build(project)
+            await get_store().save(project)
+            return
+        if module == CABERModule.PROBLEM_SOLVING and _looks_like_innovation(
+            project.original_request, project.specification
+        ):
+            # A novel, untested idea is driven through the innovation pipeline
+            # (prior art -> hypothesis -> prototype -> evaluation) rather than
+            # a generic engineering task graph.
+            from level5.intelligence.innovation import innovate_project
+
+            project = await innovate_project(project, research=bool(research))
+            await get_store().save(project)
+            return
+
+        await _orchestrator.plan(project)
         await _orchestrator.execute(project)
     except asyncio.CancelledError:
         project.status = ProjectStatus.CANCELLED
@@ -630,6 +653,18 @@ async def _run_full_pipeline(project_id: str, research: bool | None) -> None:
         project.status = ProjectStatus.FAILED
         project.log("error", f"Pipeline failed: {exc}")
         await get_store().save(project)
+
+
+_INNOVATION_TERMS = (
+    "invent", "innovation", "novel", "new technology", "prior art", "prototype",
+    "patent", "unproven", "never been", "new kind", "new type", "original idea",
+)
+
+
+def _looks_like_innovation(request: str, spec: Any) -> bool:
+    """True when a problem-solving request is about a novel, untested idea."""
+    text = f"{request} {spec.deliverable} {spec.intent}".lower()
+    return any(term in text for term in _INNOVATION_TERMS)
 
 
 async def _load(project_id: str) -> Project:

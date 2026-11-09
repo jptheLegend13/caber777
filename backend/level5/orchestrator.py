@@ -130,14 +130,20 @@ class Orchestrator:
     # ------------------------------------------------------------------ #
     # Planning pipeline
     # ------------------------------------------------------------------ #
-    async def understand_and_plan(
+    async def understand(
         self,
         project: Project,
         *,
         request: str | None = None,
         do_research: bool | None = None,
     ) -> Project:
-        """Understand the request, optionally research, then build the graph."""
+        """Understand the request, optionally research, and set the spec.
+
+        Split out from :meth:`understand_and_plan` so the run pipeline can
+        inspect the classified CABER module and route to a specialist engine
+        (building creation, problem solving) instead of always planning a
+        generic task graph.
+        """
         text = request or project.original_request
         await self._emit(project, "phase", "Understanding the request", phase="understanding")
 
@@ -179,9 +185,16 @@ class Orchestrator:
                 f"Research complete: {len(reports)} report(s)",
                 sources=sum(len(r.sources) for r in reports),
             )
+        self._research_context = research_context
+        await self._persist(project)
+        return project
 
+    async def plan(self, project: Project) -> Project:
+        """Build the dependency-aware task graph from the current spec."""
         await self._emit(project, "phase", "Planning engineering tasks", phase="planning")
-        graph = await self.planner.plan(spec, research_context=research_context)
+        graph = await self.planner.plan(
+            project.specification, research_context=getattr(self, "_research_context", "")
+        )
         project.task_graph = graph
         project.snapshot("plan", note=f"{len(graph.tasks)} tasks planned")
         await self._emit(
@@ -192,6 +205,17 @@ class Orchestrator:
         )
         await self._persist(project)
         return project
+
+    async def understand_and_plan(
+        self,
+        project: Project,
+        *,
+        request: str | None = None,
+        do_research: bool | None = None,
+    ) -> Project:
+        """Understand the request, optionally research, then build the graph."""
+        await self.understand(project, request=request, do_research=do_research)
+        return await self.plan(project)
 
     # ------------------------------------------------------------------ #
     # Execution
