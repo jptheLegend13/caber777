@@ -340,6 +340,12 @@ class AgentServerClient:
                 await asyncio.sleep(1.0)
                 break
             await asyncio.sleep(poll_interval)
+        else:
+            # The loop ran to the deadline without the conversation finishing.
+            # Report a timeout explicitly so the failure has a real cause and a
+            # conversation id to inspect, instead of an anonymous "running".
+            logger.warning("conversation %s timed out after %.0fs", conversation_id, timeout)
+            return await self.collect_result(conversation_id, "timeout")
         return await self.collect_result(conversation_id, status)
 
     async def collect_result(
@@ -406,6 +412,18 @@ class AgentServerClient:
                 retryable = classification.get("retryable")
             elif not error:
                 error = "agent conversation ended in error"
+        elif status == "timeout":
+            error = (
+                f"agent conversation did not finish within the time limit "
+                f"({conversation_id})"
+            )
+            retryable = True
+        elif status == "stopped":
+            error = f"agent conversation was stopped ({conversation_id})"
+            retryable = False
+        elif status not in ("finished",) and not error:
+            # Any other non-finished terminal state must still name a cause.
+            error = f"agent conversation ended in state '{status}' ({conversation_id})"
 
         return ExecutionResult(
             conversation_id=conversation_id,
