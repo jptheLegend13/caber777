@@ -16,6 +16,7 @@ from level5.agents.registry import all_roles, get_role, roles_by_discipline
 from level5.caber.service import CABERBuildingService
 from level5.config import get_settings
 from level5.events import get_event_bus
+from level5.intelligence.innovation import InnovationEngine
 from level5.intelligence.problem_solving import ProblemSolver
 from level5.llm.client import get_llm_client
 from level5.models import (
@@ -61,7 +62,12 @@ class SolveRequest(BaseModel):
 class BuildingRequest(BaseModel):
     request: str = Field(min_length=3)
     name: str | None = None
-    preferences: str = ""
+
+
+class InnovateRequest(BaseModel):
+    idea: str = Field(min_length=3)
+    research: bool = True
+    name: str | None = None
 
 
 # --------------------------------------------------------------------------- #
@@ -374,6 +380,65 @@ async def solve(body: SolveRequest) -> dict[str, Any]:
     return {
         "project_id": project.id,
         "report": report.as_dict(),
+    }
+
+
+# --------------------------------------------------------------------------- #
+# Innovation-to-prototype (new technology development, directive §13)
+# --------------------------------------------------------------------------- #
+@router.post("/innovate", status_code=201)
+async def innovate(body: InnovateRequest) -> dict[str, Any]:
+    settings = get_settings()
+    project = Project(
+        name=body.name or _title_from(body.idea),
+        original_request=body.idea,
+    )
+    project.specification.domain = ProjectDomain.RESEARCH
+    project.specification.caber_module = CABERModule.PROBLEM_SOLVING
+    project.specification.intent = body.idea[:200]
+    project.workspace_path = str(settings.projects_dir / project.id)
+    Path(project.workspace_path).mkdir(parents=True, exist_ok=True)
+    await get_store().save(project)
+
+    engine = InnovationEngine()
+    report = await engine.investigate(
+        body.idea, workspace=Path(project.workspace_path), research=body.research
+    )
+    out = Path(project.workspace_path) / "innovation.json"
+    out.write_text(json.dumps(report.as_dict(), indent=2), encoding="utf-8")
+    from level5.models import Artifact
+
+    project.artifacts = [
+        Artifact(
+            name="innovation.json",
+            kind="report",
+            path="innovation.json",
+            description="Innovation investigation with prior art, prototype and evaluation",
+        )
+    ]
+    for relative in (report.prototype.files if report.prototype else []):
+        project.artifacts.append(
+            Artifact(
+                name=Path(relative).name,
+                kind="prototype",
+                path=f"prototype/{relative}",
+                description="Prototype artifact produced by the investigation run",
+            )
+        )
+    project.log(
+        "innovation",
+        f"Innovation investigated (feasibility: {report.feasibility})",
+        prototype_ok=bool(report.prototype and report.prototype.succeeded),
+        confidence=report.confidence,
+    )
+    project.status = (
+        ProjectStatus.DELIVERED if report.status == "completed" else ProjectStatus.FAILED
+    )
+    await get_store().save(project)
+    return {
+        "project_id": project.id,
+        "report": report.as_dict(),
+        "report_url": f"/api/projects/{project.id}",
     }
 
 

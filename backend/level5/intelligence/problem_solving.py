@@ -9,37 +9,18 @@ Pipeline: UNDERSTAND -> RESEARCH -> MODEL -> SIMULATE -> ANALYSE -> VERIFY.
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
-import sys
-import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from level5.execution import ComputationResult, run_python_script
 from level5.intelligence.research import ResearchEngine
 from level5.llm.client import LLMClient, get_llm_client
 from level5.models import Project, ProjectStatus
 
 logger = logging.getLogger("level5.intelligence.problem_solving")
-
-
-@dataclass
-class ComputationResult:
-    """Outcome of running a generated model script."""
-
-    script: str
-    stdout: str = ""
-    stderr: str = ""
-    exit_code: int = -1
-    timed_out: bool = False
-    duration_s: float = 0.0
-    parsed: dict[str, Any] | None = None
-
-    @property
-    def succeeded(self) -> bool:
-        return self.exit_code == 0 and not self.timed_out
 
 
 @dataclass
@@ -189,39 +170,7 @@ class ProblemSolver:
     async def _run_model(self, script: str, workspace: Path) -> ComputationResult:
         """Execute a generated model script in an isolated temp directory."""
         workspace.mkdir(parents=True, exist_ok=True)
-        models_dir = workspace / "models"
-        models_dir.mkdir(parents=True, exist_ok=True)
-        script_path = models_dir / "model.py"
-        script_path.write_text(script, encoding="utf-8")
-
-        start = asyncio.get_event_loop().time()
-        proc = await asyncio.create_subprocess_exec(
-            sys.executable,
-            str(script_path),
-            cwd=str(models_dir),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            env={"PYTHONHASHSEED": "0", "PATH": "/usr/bin:/bin:/usr/local/bin"},
-        )
-        timed_out = False
-        try:
-            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=self.timeout)
-        except asyncio.TimeoutError:
-            timed_out = True
-            proc.kill()
-            stdout, stderr = await proc.communicate()
-        duration = asyncio.get_event_loop().time() - start
-        out_text = stdout.decode("utf-8", "replace")
-        err_text = stderr.decode("utf-8", "replace")
-        return ComputationResult(
-            script=script,
-            stdout=out_text,
-            stderr=err_text,
-            exit_code=proc.returncode if proc.returncode is not None else -1,
-            timed_out=timed_out,
-            duration_s=round(duration, 3),
-            parsed=_parse_json_block(out_text),
-        )
+        return await run_python_script(script, workspace, timeout=self.timeout)
 
     async def _analyse(self, report: SolutionReport) -> dict[str, Any]:
         comp = report.computation
@@ -251,18 +200,6 @@ class ProblemSolver:
             max_tokens=2500,
         )
         return data
-
-
-def _parse_json_block(text: str) -> dict[str, Any] | None:
-    start = text.find("{")
-    end = text.rfind("}")
-    if start == -1 or end == -1 or end <= start:
-        return None
-    try:
-        parsed = json.loads(text[start : end + 1])
-    except json.JSONDecodeError:
-        return None
-    return parsed if isinstance(parsed, dict) else None
 
 
 async def solve_project(project: Project, *, research: bool = True) -> Project:

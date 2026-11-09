@@ -231,7 +231,8 @@ class Artifact(BaseModel):
     id: str = Field(default_factory=lambda: _id("art"))
     name: str
     kind: Literal[
-        "file", "directory", "document", "report", "preview", "model3d", "test_result"
+        "file", "directory", "document", "report", "preview", "model3d",
+        "test_result", "prototype",
     ] = "file"
     path: str = ""
     size_bytes: int = 0
