@@ -263,3 +263,32 @@ token module. A class not backed by a Meridian token simply does not exist.
   (open to sky) for the terrace/pool/deck. All 13 code/planning items carry
   `status: UNVERIFIED_HYPOTHESIS` because the project ran with
   `model_prior_no_retrieval` (no jurisdiction, no sources).
+
+## LEVEL 5 platform — operating notes (Phase 2 RC)
+
+- **Run the platform:** `scripts/setup.sh` once, then `scripts/dev.sh --frontend`.
+  Backend `127.0.0.1:12000`; Agent Server `127.0.0.1:60000` (SDK 1.60.1).
+  Health: `curl -sS http://127.0.0.1:12000/api/health`.
+- **Tests:** `cd backend && .venv/bin/python -m pytest -q` (252 passed).
+  Frontend: `cd frontend && npx tsc --noEmit && npm run build`.
+- **Hard rule (carried from Phase 1):** do NOT mark a feature done because code
+  exists. Verify it live (run it, hit the endpoint, inspect the artifact) and
+  record the raw observation in `docs/RUNS.md`.
+- **Start a run:** `POST /api/projects {"request": "...", "auto_start": true}`.
+  Watch `task_graph.tasks[].status`; `delivered` requires every acceptance
+  criterion satisfied (unmet criteria fail the project, by design).
+- **Repair an existing project:** `POST /api/projects/{id}/follow-up` drives the
+  most recent agent conversation in the project workspace — the real repair path.
+- **Per-project versioning:** each project workspace is its own git repo. Use
+  `/revisions`, `/revisions/{sha}/diff`, `/revisions/{sha}/restore`,
+  `/export` (zip). Restore commits a `pre-restore` revision first (reversible).
+- **Research needs no key:** Wikipedia/arXiv/Crossref/GitHub/StackExchange always
+  run; Tavily/Brave add coverage when their keys are set. The engine labels
+  findings (`verified`/`published`/`hypothesis`/`unsupported`) and says so when
+  retrieval finds nothing rather than inventing sources.
+- **Dependency pin:** `openhands-sdk==1.60.1` → `litellm<1.106` →
+  `filelock<4.0`. Do not upgrade `filelock` to 4.x; the resolution breaks. The
+  accepted risk is documented in `docs/SECURITY.md`.
+- **Docs map:** `docs/ROADMAP.md` (milestones + known limitations),
+  `docs/RUNS.md` (live evidence per cycle), `docs/SECURITY.md`,
+  `docs/HANDOVER.md`, `docs/ADR/`.
