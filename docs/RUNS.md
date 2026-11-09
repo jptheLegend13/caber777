@@ -309,6 +309,84 @@ enterprise application yet.
 
 ---
 
+## Run 7 — Phase 2 release-candidate verification
+
+Every item below was observed live this cycle against the running backend
+(`127.0.0.1:12000`) and the real Agent Server (`127.0.0.1:60000`, SDK 1.60.1).
+
+### 7.1 End-to-end creation with a real deliverable
+
+Request: *"Build a Python CLI tool called wordcount that reads a text file and
+prints the number of lines, words and characters, with a small pytest test
+suite."*
+
+| Stage | Observed result |
+|---|---|
+| Understanding | domain `general`, module **A**, 5 requirements (3 user/must, 2 inferred/should) |
+| Planning | 8-task graph: scaffold, core function, CLI/entry point, error handling, tests, installability verification, README, independent review |
+| Execution | 8/8 tasks **succeeded**, 8 agent conversations |
+| Files written | `pyproject.toml`, `src/wordcount/{__init__,__main__,cli,core}.py`, `tests/test_{core,cli}.py`, `README.md`, `VERIFICATION.md`, `REVIEW.md`, built `dist/*.whl` + `dist/*.tar.gz` |
+| Tests | **14/14 passed** (platform-recorded); the project's own suite is 33 tests |
+| Acceptance criteria | **5/5 satisfied** |
+| Final status | **delivered** |
+| Benchmark record | 8/8 tasks, 5/5 criteria, 14/14 tests, 672.6 s |
+
+The delivered tool was then run directly, outside the platform:
+
+```
+$ ./.venv/bin/python -m wordcount /tmp/sample.txt
+lines: 2
+words: 4
+characters: 24
+$ ./.venv/bin/wordcount /tmp/does-not-exist.txt
+wordcount: cannot read '/tmp/does-not-exist.txt': no such file   (exit 1)
+```
+
+The independent review agent wrote `REVIEW.md` with verdict **PASS (with
+findings)** and re-ran the suite itself (33 passed), confirming the review is
+real work, not a fabricated summary.
+
+### 7.2 Persistence across a restart
+
+The backend process was killed and restarted. The delivered project reloaded
+from disk intact: status `delivered`, 8/8 tasks `succeeded`, 5/5 criteria met,
+17 artifacts, 8 conversations, both labelled versions (`plan`, `delivered`).
+
+### 7.3 Error recovery
+
+A controlled regression was injected into the delivered `src/wordcount/core.py`
+(`characters` changed to `len(text.strip())`). The project's own tests caught it
+(**10 failed, 23 passed**). A repair instruction was then sent through the real
+follow-up path (`POST /api/projects/{id}/follow-up`), which drives the most
+recent agent conversation. The agent restored `len(text)` and the suite returned
+to **33 passed**. Detection and repair both used real tooling.
+
+### 7.4 Research retrieval
+
+`ResearchEngine.search("retrieval augmented generation")` merged **8 hits across
+5 keyless providers** (Wikipedia, arXiv, Crossref, GitHub, Stack Exchange), with
+no API key configured. `investigate(...)` returned a `completed` report whose
+sources are classified per-source (`published`, `unsupported`); asked for a
+quantified latency benefit, the report said the sources do **not** supply one
+rather than inventing a number.
+
+### 7.5 Security
+
+Full pass in `docs/SECURITY.md`: no committed secrets, no secrets in API
+responses or the shipped bundle, path-traversal guards verified live with raw
+paths, and a documented accepted-risk finding for the transitive `filelock`
+dependency (not reachable in this deployment; fix blocked by the pinned
+OpenHands SDK).
+
+### 7.6 Regression suite
+
+```
+cd backend && .venv/bin/python -m pytest -q
+252 passed, 1 warning
+```
+
+---
+
 ## What is deliberately not claimed
 
 - No benchmark against Claude Code, Codex, Cursor, Devin, OpenHands, Antigravity

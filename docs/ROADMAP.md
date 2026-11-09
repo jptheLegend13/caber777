@@ -59,12 +59,19 @@ inspect role allocation and dependency chains):
   command, status and output. A failing build is repaired (bounded) and
   re-built, not hidden. Verified against a real generated monorepo: the build
   runs and its true result is reported (it failed — see `RUNS.md`).
-- [ ] Verified preview/emulator integration for mobile and desktop.
+- [ ] Verified preview/emulator integration for mobile and desktop. The preview
+  tab does route by domain: web/enterprise/design get the live browser preview,
+  and other domains get a kind-appropriate panel built from the project's real
+  artifacts and its real build/run evidence (never a simulated animation). That
+  panel is an honest summary, not a device emulator, so this item stays open.
 
 ## MILESTONE 4 — Problem-Solving Intelligence — `[~]`
 
-- [x] Research with real retrieval (Tavily / Brave / DuckDuckGo) and cited,
-  classified findings.
+- [x] Research with real retrieval and cited, classified findings. Keyless
+  official APIs (Wikipedia, arXiv, Crossref, GitHub, Stack Exchange) always run,
+  so retrieval works with no key at all; keyed providers (Tavily, Brave) and a
+  DuckDuckGo fallback are merged in when configured. Verified live: 8 hits
+  merged across 5 keyless providers (see `RUNS.md` Run 7.4).
 - [x] Computational model generation, execution and one informed repair attempt.
 - [x] Independent verification of results with stated limitations and confidence.
 - [~] Structured scientific workflow beyond the computational-model path
@@ -145,3 +152,8 @@ inspect role allocation and dependency chains):
    configured, the engine labels all findings as unverified hypotheses.
 5. **Agent reliability is bounded by the model.** A task can fail; failures are
    recorded verbatim and dependent tasks are skipped rather than faked.
+6. **One accepted dependency risk.** The transitive `filelock` (via the pinned
+   OpenHands SDK → litellm chain) carries open advisories whose fix version the
+   SDK's litellm pin forbids. The affected code path is not used by LEVEL 5 and
+   the flaws need a local co-tenant. Full analysis in `docs/SECURITY.md`; upgrade
+   when the SDK allows it.
