@@ -48,6 +48,17 @@ CREATE TABLE IF NOT EXISTS benchmarks (
     created_at TEXT NOT NULL,
     document TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS benchmark_suite_records (
+    id TEXT PRIMARY KEY,
+    suite TEXT NOT NULL,
+    system TEXT NOT NULL,
+    task TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    document TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_suite_records_lookup
+    ON benchmark_suite_records(suite, system, task);
 """
 
 
@@ -219,6 +230,51 @@ class ProjectStore:
                 "SELECT document FROM benchmarks ORDER BY created_at DESC LIMIT ?",
                 (limit,),
             ) as cursor:
+                rows = await cursor.fetchall()
+        return [json.loads(r[0]) for r in rows]
+
+    # -- competitive benchmark suite records -------------------------------- #
+    async def save_suite_record(self, record: dict[str, Any]) -> None:
+        """Store one system's result on one task of a named suite.
+
+        A record is keyed by (suite, system, task) so re-running a system on the
+        same task overwrites rather than duplicates, which keeps a suite
+        reproducible.
+        """
+        await self.init()
+        record = dict(record)
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute(
+                """
+                INSERT INTO benchmark_suite_records
+                    (id, suite, system, task, created_at, document)
+                VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET document=excluded.document
+                """,
+                (
+                    record["id"],
+                    record.get("suite", ""),
+                    record.get("system", ""),
+                    record.get("task", ""),
+                    record.get("recorded_at", datetime.now(timezone.utc).isoformat()),
+                    json.dumps(record),
+                ),
+            )
+            await db.commit()
+
+    async def list_suite_records(
+        self, suite: str | None = None, limit: int = 1000
+    ) -> list[dict[str, Any]]:
+        await self.init()
+        query = "SELECT document FROM benchmark_suite_records"
+        params: list[Any] = []
+        if suite:
+            query += " WHERE suite = ?"
+            params.append(suite)
+        query += " ORDER BY created_at DESC LIMIT ?"
+        params.append(limit)
+        async with aiosqlite.connect(self.db_path) as db:
+            async with db.execute(query, params) as cursor:
                 rows = await cursor.fetchall()
         return [json.loads(r[0]) for r in rows]
 

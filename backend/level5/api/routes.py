@@ -70,6 +70,24 @@ class InnovateRequest(BaseModel):
     name: str | None = None
 
 
+class SuiteRecordRequest(BaseModel):
+    """One system's measured outcome on one suite task."""
+
+    system: str = Field(min_length=1)
+    task: str = Field(min_length=1)
+    evidence: dict[str, bool] = Field(default_factory=dict)
+    time_seconds: float | None = None
+    cost_usd: float | None = None
+    human_interventions: int | None = None
+    notes: str = ""
+
+
+class SuiteNotRunRequest(BaseModel):
+    system: str = Field(min_length=1)
+    task: str = Field(min_length=1)
+    reason: str | None = None
+
+
 # --------------------------------------------------------------------------- #
 # Health & metadata
 # --------------------------------------------------------------------------- #
@@ -556,6 +574,80 @@ async def list_providers() -> dict[str, Any]:
 async def list_benchmarks(limit: int = 200) -> dict[str, Any]:
     items = await get_store().list_benchmarks(limit=limit)
     return {"items": items, "count": len(items)}
+
+
+# --------------------------------------------------------------------------- #
+# Competitive benchmark suite (directive §17)
+# --------------------------------------------------------------------------- #
+@router.get("/benchmarks/suite")
+async def suite_definition() -> dict[str, Any]:
+    """The fixed suite tasks and their objective criteria."""
+    from level5.benchmark_suite import SUITE_VERSION, list_tasks
+
+    return {"suite_version": SUITE_VERSION, "tasks": list_tasks()}
+
+
+@router.get("/benchmarks/suite/results")
+async def suite_results(suite: str | None = None) -> dict[str, Any]:
+    """Recorded results aggregated per system, with missing runs never faked."""
+    from level5.benchmark_suite import SUITE_VERSION, aggregate
+
+    records = await get_store().list_suite_records(suite=suite)
+    return {"suite_version": SUITE_VERSION, "records": records, "summary": aggregate(records)}
+
+
+@router.post("/benchmarks/suite/records", status_code=201)
+async def suite_record(body: SuiteRecordRequest) -> dict[str, Any]:
+    """Score and store one system's outcome on one suite task.
+
+    Only criteria with supplied evidence can pass; a criterion with no evidence
+    is scored False. A task counts as solved only when every criterion passes.
+    """
+    from level5.benchmark_suite import SUITE_VERSION, score_transcript
+
+    try:
+        result = score_transcript(
+            system=body.system,
+            task_id=body.task,
+            evidence=body.evidence,
+            time_seconds=body.time_seconds,
+            cost_usd=body.cost_usd,
+            human_interventions=body.human_interventions,
+            notes=body.notes,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=f"unknown suite task: {exc}") from exc
+    record = {
+        "id": f"suiteres_{SUITE_VERSION}_{body.system}_{body.task}".replace("/", "_"),
+        "suite": SUITE_VERSION,
+        **result.as_dict(),
+    }
+    await get_store().save_suite_record(record)
+    return {"record": record}
+
+
+@router.post("/benchmarks/suite/not-run", status_code=201)
+async def suite_not_run(body: SuiteNotRunRequest) -> dict[str, Any]:
+    """Record explicitly that a system was not benchmarked here.
+
+    No fabricated score is ever produced for a system this environment cannot
+    drive under equivalent conditions.
+    """
+    from level5.benchmark_suite import SUITE_VERSION, run_external_system
+
+    try:
+        result = run_external_system(
+            system=body.system, task_id=body.task, reason=body.reason
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=f"unknown suite task: {exc}") from exc
+    record = {
+        "id": f"suiteres_{SUITE_VERSION}_{body.system}_{body.task}".replace("/", "_"),
+        "suite": SUITE_VERSION,
+        **result.as_dict(),
+    }
+    await get_store().save_suite_record(record)
+    return {"record": record}
 
 
 @router.get("/improvements")

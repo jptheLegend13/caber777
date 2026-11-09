@@ -111,9 +111,15 @@ inspect role allocation and dependency chains):
   executed* by the shared sandboxed runner, and the run is evaluated with honest
   confidence and limitations. Reachable from the command box, which routes
   novel-idea requests to it (see `tests/test_routing.py`).
-- [ ] The competitive benchmark suite: a fixed set of equivalent tasks run
-  against comparable systems under the same model and hardware. **Not run.**
-  No superiority claim is made anywhere in this platform.
+- [~] The competitive benchmark suite: a fixed, versioned set of equivalent
+  engineering tasks with objective criteria, a deterministic scorer, per-system
+  aggregation and REST endpoints now exist (`benchmark_suite.py`,
+  `/api/benchmarks/suite*`; `tests/test_benchmark_suite.py`). Missing runs are
+  recorded as `not_run`, never as a fabricated score, and a system with no
+  scored task reports a null success rate. **No external system has been run
+  against the suite**: this environment cannot drive Claude Code, Codex, Cursor,
+  Devin, Factory or Antigravity under equivalent conditions. **No superiority
+  claim is made.** A real comparison remains the outstanding prerequisite.
 
 ---
 
