@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+.pytest_cache/
+.level5-data/
+
+# Node
+node_modules/
+dist/
+*.log
+
+# Local secrets
+.oh_session_key
+.env
+
+# TypeScript incremental build cache
+*.tsbuildinfo
