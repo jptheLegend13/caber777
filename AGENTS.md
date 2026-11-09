@@ -190,6 +190,15 @@ token module. A class not backed by a Meridian token simply does not exist.
   branch is squash-merged back under a lock, and a conflict falls back to
   copying the task's changed files. Off by default; when isolation cannot be set
   up the task runs in the shared workspace and a `task_isolation` event says so.
+- **The build test requires a *static* output dir.** `preview.find_dist()` only
+  accepts `index.html` under `dist/`, `build/`, `out/`, or `.output/public/`. A
+  default Next.js build emits only `.next/`, so `next build` exits 0 yet the
+  harness appends `build exited 0 but produced no index.html` and fails the
+  build test. A Next.js web app in this platform must therefore set
+  `output: 'export'` (writes `out/`). Two consequences to plan for: (1) any
+  dynamic route needs `generateStaticParams`, and (2) `next start` refuses an
+  exported build — serve `out/` with a static server (see
+  `frontend/scripts/serve-static.mjs`). Pinned by `tests/test_preview.py`.
 
 ## Session notes
 

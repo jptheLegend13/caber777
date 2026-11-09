@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 from pathlib import Path
 from typing import Any
 
@@ -67,6 +68,14 @@ class BuildingRequest(BaseModel):
 class InnovateRequest(BaseModel):
     idea: str = Field(min_length=3)
     research: bool = True
+    name: str | None = None
+
+
+class BuildingViewerRequest(BaseModel):
+    """Create an application that renders an existing building's scene."""
+
+    building_project_id: str | None = None
+    building_request: str | None = None
     name: str | None = None
 
 
@@ -460,6 +469,40 @@ async def innovate(body: InnovateRequest) -> dict[str, Any]:
     }
 
 
+@router.post("/projects/{project_id}/building-viewer", status_code=201)
+async def building_viewer(
+    project_id: str, body: BuildingViewerRequest | None = None
+) -> dict[str, Any]:
+    """Build an application that renders a building project's scene (C -> A handoff).
+
+    Intelligence A consumes the real artifact produced by Intelligence C. The
+    upstream building is either the project in the path (if it is a building) or
+    the project named in the body; the generated viewer app is built and served
+    through the normal preview path.
+    """
+    from level5.integration import HandoffError, create_building_viewer_app
+
+    body = body or BuildingViewerRequest()
+    building_id = project_id
+    upstream = await get_store().get(project_id)
+    if upstream is None:
+        raise HTTPException(status_code=404, detail="project not found")
+    if upstream.specification.caber_module != CABERModule.BUILDING:
+        # Allow an application project to name its source building explicitly.
+        if body.building_project_id:
+            building_id = body.building_project_id
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail="project is not a building and no building_project_id was given",
+            )
+    try:
+        app = await create_building_viewer_app(building_id, name=body.name)
+    except HandoffError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"project": json.loads(app.model_dump_json())}
+
+
 # --------------------------------------------------------------------------- #
 # CABER building creation (Intelligence C)
 # --------------------------------------------------------------------------- #
@@ -722,6 +765,30 @@ async def _run_full_pipeline(project_id: str, research: bool | None) -> None:
 
         project = await _orchestrator.understand(project)
         module = project.specification.caber_module
+
+        # Cross-intelligence handoff (Milestone 6) is checked before the module
+        # dispatch: a request that asks for an application displaying a building
+        # classifies as module C (it contains the word "building"), but it is
+        # really Intelligence A consuming Intelligence C's output. Handling it
+        # first lets the app be built around a real scene instead of treating the
+        # request as "design a new building".
+        if _looks_like_building_viewer(
+            project.original_request, project.specification
+        ):
+            from level5.integration import (
+                HandoffError,
+                apply_building_viewer,
+                ensure_building_project,
+            )
+
+            try:
+                building = await ensure_building_project(project.original_request)
+                project = await apply_building_viewer(project, building)
+            except HandoffError as exc:
+                project.log("handoff_failed", f"Building handoff failed: {exc}")
+            await get_store().save(project)
+            return
+
         if module == CABERModule.BUILDING:
             # Building requests go to the dedicated 3D creation intelligence,
             # which performs its own architectural understanding and validation.
@@ -767,6 +834,40 @@ def _looks_like_innovation(request: str, spec: Any) -> bool:
     """True when a problem-solving request is about a novel, untested idea."""
     text = f"{request} {spec.deliverable} {spec.intent}".lower()
     return any(term in text for term in _INNOVATION_TERMS)
+
+
+_VIEWER_TERMS = (
+    "viewer", "view the building", "view a building", "display the building",
+    "display a building", "walkthrough", "walk through", "showcase the building",
+    "explore the building", "explore a building", "3d tour", "virtual tour",
+)
+_BUILDING_TERMS = (
+    "building", "house", "villa", "mansion", "apartment", "architecture",
+    "floor plan", "3d model", "3d scene", "bim",
+)
+_APP_TERMS = (
+    "app", "application", "website", "web app", "web application", "portal",
+    "interface", "dashboard", "viewer", "tour", "frontend",
+)
+
+
+def _looks_like_building_viewer(request: str, spec: Any) -> bool:
+    """True when an application request is about displaying a building.
+
+    Deliberately conservative: the request must combine an application/viewer
+    intent with a building subject, so a plain "build a house" (module C) or a
+    plain "build a dashboard" (module A) never matches. App terms are matched on
+    word boundaries so an incidental substring ("happy" contains "app") cannot
+    trigger the handoff.
+    """
+    text = f"{request} {spec.deliverable} {spec.intent}".lower()
+    if not any(t in text for t in _BUILDING_TERMS):
+        return False
+    if any(t in text for t in _VIEWER_TERMS):
+        return True
+    return any(
+        re.search(rf"(?<![a-z]){re.escape(t)}(?![a-z])", text) for t in _APP_TERMS
+    )
 
 
 async def _load(project_id: str) -> Project:

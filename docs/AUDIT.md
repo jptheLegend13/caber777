@@ -165,6 +165,34 @@ Live-verified: after a fresh backend start the endpoint returned
 (`proj_c7c9a0431af6`) instead of 404. Covered by
 `test_caber_validation_falls_back_to_disk_after_restart` in `tests/test_api.py`.
 
+### F12 — Milestone 6 cross-intelligence handoff was missing (severity: medium) — **FIXED and live-verified**
+
+§12 requires the three intelligences to share one platform and hand work
+between each other; the roadmap listed "a single run that spans two
+intelligences" as not implemented. An application request that displays a
+building could only be served by the generic task graph, which would try to
+invent the building from scratch rather than reuse a real CABER scene. Fix:
+`integration.py` (`ensure_building_project`, `apply_building_viewer`,
+`create_building_viewer_app`), a REST route
+`POST /api/projects/{id}/building-viewer`, and command-box auto-detect in
+`_run_full_pipeline` (the handoff is checked before the module dispatch, because
+such a request classifies as module C on the word "building"). The generated app
+copies the building's real `building.scene.json`, so the two modules are linked
+by data, not by a claim.
+
+Live-verified: one command-box request built a building (275 primitives) and then
+a viewer app that renders that exact scene, served at `/preview/`
+(`build-info.json` → 255 primitives); the handoff route produced a `delivered`
+module-A project with a passing build. Covered by `tests/test_integration.py`
+(11 tests). A false-positive guard was added: app terms are matched on word
+boundaries so "happy" cannot trigger the handoff.
+
+### F13 — Stray one-byte `cab` file committed at the repo root (severity: low) — **FIXED**
+
+The repository root contained a tracked file `cab` holding a single newline,
+referenced by nothing (no code, doc or build path reads it). It was removed this
+cycle. Repository hygiene only; no runtime impact.
+
 ## 3. Capability classification
 
 ### Platform / control plane
@@ -193,6 +221,7 @@ Live-verified: after a fresh backend start the endpoint returned
 | Self-improvement loop (screened proposals) | IV | `tests/test_self_improvement.py` |
 | Self-benchmarking (own metrics) | IV | `tests/test_benchmarks.py` |
 | **Competitive benchmark suite** | **PA (new)** | fixed task set, deterministic scorer, per-system aggregation and REST endpoints (`tests/test_benchmark_suite.py`); **no external system has been run** — the environment cannot drive Claude Code, Codex, Cursor, Devin, Factory or Antigravity under equivalent conditions. No superiority claim is made |
+| Cross-intelligence handoff (C → A) | IV (new) | `integration.py`, `POST /projects/{id}/building-viewer`, command-box auto-detect; live-verified (F12); `tests/test_integration.py` |
 | Authentication / multi-user accounts | **MI** | Single-operator tool; no account system |
 | Per-task git worktree isolation | IV (new) | `worktrees.py`; real worktree + squash-merge; live-verified (F3) |
 
@@ -242,10 +271,9 @@ Live-verified: after a fresh backend start the endpoint returned
 
 ## 4. Test suite
 
-`backend/.venv/bin/python -m pytest -q` → **204 passed** (this cycle: 179 → 204;
-added `test_benchmark_suite.py`, `test_llm_transport.py`, `test_worktrees.py`,
-dispatch and regression tests). The suite replaces only the network boundary in orchestrator
-tests and states that in the module.
+`backend/.venv/bin/python -m pytest -q` → **215 passed** (this cycle: 204 → 215;
+added `test_integration.py`, 11 tests). The suite replaces only the network
+boundary in orchestrator tests and states that in the module.
 
 ## 5. Honest limitations carried forward
 

@@ -81,13 +81,18 @@ inspect role allocation and dependency chains):
 - [x] Natural-language editing routed to the building's agent conversation.
 - [x] Independent validation (11 checks) with a published score.
 
-## MILESTONE 6 — Integrated CABER — `[~]`
+## MILESTONE 6 — Integrated CABER — `[x]`
 
 - [x] One command interface and one project store for all three intelligences.
 - [x] Shared research, agent execution, file management and version history.
 - [x] Per-project module tagging (A / B / C / P).
-- [ ] A single run that spans two intelligences (for example, an application that
-  renders a CABER building) is not yet implemented.
+- [x] A single run that spans two intelligences: an application request that
+  displays a building is served by Intelligence A consuming the real scene
+  artifact produced by Intelligence C (`integration.py`,
+  `POST /api/projects/{id}/building-viewer`, and command-box auto-detect in
+  `_run_full_pipeline`). Verified live: the command box built a building
+  (275 primitives) and then a viewer application that renders that exact scene,
+  served at `/preview/`; covered by `tests/test_integration.py`.
 
 ## MILESTONE 7 — Continuous research and improvement — `[~]`
 

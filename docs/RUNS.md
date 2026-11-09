@@ -188,11 +188,43 @@ observed this cycle, not carried over from a previous one.
 Honest status: the enterprise task-manager run is still in progress and is **not
 delivered**. No cross-system benchmark has been run.
 
+## Run 6 — audit cycle: cross-intelligence integration live-verified
+
+Milestone 6's last open item — a single run spanning two intelligences — is now
+implemented and verified live. Everything below was observed this cycle.
+
+**Command-box handoff (Intelligence C → Intelligence A).** One request from the
+command box: *"Build a web application that displays a small modern lakeside
+house in an interactive 3D viewer"* (`POST /api/projects`, `auto_start=true`).
+
+| Stage | Observed result |
+|---|---|
+| Understanding | request classified module **A** (application), deliverable a viewer app |
+| Building built (Intelligence C) | building project `proj_3189cdfccc9b` delivered — **275 primitives**, 12 rooms, 7 lights |
+| Handoff event | `Received scene from building proj_3189cdfccc9b (275 primitives)` — module C → A |
+| Viewer app built (Intelligence A) | `Viewer app built`; project `proj_34a18421969e` **delivered** |
+| Preview served | `GET /preview/` → 200 (viewer HTML); `GET /preview/building.scene.json` → 200, **132370 bytes**; `/preview/build-info.json` → `{"primitives":255,"lights":15,"rooms":11}` |
+
+**Handoff route (`POST /api/projects/{id}/building-viewer`).** A delivered
+building (`proj_c7c9a0431af6`) was handed to a new app project
+(`proj_648a3707a22d`): status `delivered`, module **A**, preview URL set,
+artifacts `web/index.html`, `building.scene.json`, `web/dist`, build test
+`npm run build (viewer app)` → **passed**, and the handoff event naming the
+source building. The app's preview root served 200 and the copied scene 132 KB.
+
+**Regression suite.** `tests/test_integration.py` (11 tests) covers the real
+handoff build, the loud failure when a scene is missing, rejection of a
+non-building project, building reuse, the classifier (including the "happy"
+substring false-positive guard) and command-box routing. Full suite:
+**215 passed**.
+
+---
+
 ## Test suite
 
 ```
 cd backend && .venv/bin/python -m pytest -q
-204 passed
+215 passed
 ```
 
 Coverage: domain model and storage, agent registry (38 roles), CABER geometry
