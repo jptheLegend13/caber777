@@ -157,3 +157,35 @@ inspect role allocation and dependency chains):
    SDK's litellm pin forbids. The affected code path is not used by LEVEL 5 and
    the flaws need a local co-tenant. Full analysis in `docs/SECURITY.md`; upgrade
    when the SDK allows it.
+
+---
+
+## MILESTONE 8 — Intelligence independence — `[~]`
+
+The permanent requirement that LEVEL 5 not depend on any one company's AI API.
+Full detail, diagram and the staged model roadmap: `docs/ARCHITECTURE-INDEPENDENCE.md`.
+
+- [x] Internal model gateway with explicit backend classes (`internal`,
+  `development`, `external`); routing by class, capability and health.
+- [x] External providers OFF by default and never used as a fallback for an
+  internal failure (`level5/llm/gateway.py`; enforced and tested).
+- [x] Self-hosted inference runtime manager: engine discovery, start/stop,
+  model registry with operator-declared provenance (`level5/llm/runtime.py`).
+- [x] Local memory and retrieval with no model (SQLite + BM25,
+  `level5/knowledge/`), wired into the orchestrator (write spec/research,
+  recall before planning).
+- [x] Model-free core: deterministic understanding and per-domain task-graph
+  templates (`level5/intelligence/fallbacks.py`); understanding and planning
+  degrade to these when no model answers.
+- [x] Independence test: `tests/test_independence.py` (20 tests) and
+  `scripts/independence_check.py` — **9/9 core capabilities with no external
+  model** (reasoning, memory, coordination, project creation, code execution,
+  error recovery, model-free fallback).
+- [ ] **Deploy a self-hosted open-weight model** on hardware we control. This
+  environment has no GPU and no runtime binary; it requires a host decision and
+  a model choice from the founder (see `ARCHITECTURE-INDEPENDENCE.md` §7).
+- [ ] Training / fine-tuning pipeline, proprietary datasets, own benchmarks run
+  against a model. Not started.
+- **No foundation model has been trained.** LEVEL 5 does not have its own model
+  and is not described as having one. A self-hosted third-party model is not
+  "our model".

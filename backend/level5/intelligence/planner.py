@@ -100,11 +100,17 @@ class Planner:
         system = _SYSTEM % {"roles": allowed_roles}
         user = self._render_brief(spec, research_context, max_tasks)
 
-        data, usage = await self.llm.chat_json(
-            [{"role": "system", "content": system}, {"role": "user", "content": user}],
-            temperature=0.2,
-            max_tokens=5000,
-        )
+        try:
+            data, usage = await self.llm.chat_json(
+                [{"role": "system", "content": system}, {"role": "user", "content": user}],
+                temperature=0.2,
+                max_tokens=5000,
+            )
+        except Exception as exc:  # noqa: BLE001 - degrade, never stop
+            from level5.intelligence.fallbacks import graph_from_spec
+
+            logger.warning("model planning unavailable (%s); using templates", exc)
+            return graph_from_spec(spec)
         logger.info("planning complete (%s tokens)", usage.total_tokens)
         return self._to_graph(data, allowed_roles, max_tasks)
 

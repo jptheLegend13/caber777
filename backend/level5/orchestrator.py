@@ -27,6 +27,7 @@ from level5.events import get_event_bus
 from level5.intelligence.planner import Planner
 from level5.intelligence.research import ResearchEngine
 from level5.intelligence.understanding import UnderstandingEngine
+from level5.knowledge.store import get_knowledge_store
 from level5.models import (
     Artifact,
     Project,
@@ -155,6 +156,13 @@ class Orchestrator:
         project.name = project.name or _derive_name(text)
         project.status = ProjectStatus.PLANNING
         self._research_context = ""
+        # Remember the specification in LEVEL 5's own knowledge store. This is
+        # the platform's memory: it is written here and retrieved before
+        # planning, and it needs no model to work.
+        try:
+            await self._remember_specification(project)
+        except Exception as exc:  # noqa: BLE001 - memory must never break a run
+            logger.warning("knowledge write failed: %s", exc)
         await self._emit(
             project,
             "specification",
@@ -165,6 +173,60 @@ class Orchestrator:
         )
         await self._persist(project)
         return project
+
+    async def _remember_specification(self, project: Project) -> None:
+        """Store the request, requirements and decisions in project memory."""
+        store = get_knowledge_store()
+        spec = project.specification
+        await store.add(
+            project_id=project.id,
+            kind="specification",
+            title=project.name or "Specification",
+            text=(
+                f"Intent: {spec.intent}\nDeliverable: {spec.deliverable}\n"
+                f"Domain: {spec.domain.value}\nModule: {spec.caber_module.value}\n"
+                f"Summary: {spec.summary}"
+            ),
+            source="understanding",
+        )
+        for req in spec.requirements:
+            await store.add(
+                project_id=project.id,
+                kind="requirement",
+                title=req.text[:120],
+                text=f"[{req.origin}/{req.priority}] {req.text}",
+                source="understanding",
+            )
+        for decision in spec.technology_choices:
+            await store.add(
+                project_id=project.id,
+                kind="decision",
+                title=f"{decision.get('area', 'decision')}: {decision.get('choice', '')}"[
+                    :120
+                ],
+                text=(
+                    f"{decision.get('area', '')} -> {decision.get('choice', '')}: "
+                    f"{decision.get('rationale', '')}"
+                ),
+                source="planning",
+            )
+
+    async def recall(self, query: str, project_id: str, limit: int = 6) -> str:
+        """Retrieve relevant project memory as a compact context block.
+
+        Pure keyword retrieval — no model, no network.
+        """
+        try:
+            hits = await get_knowledge_store().search(
+                query, project_id=project_id, limit=limit
+            )
+        except Exception as exc:  # noqa: BLE001 - recall must never break a run
+            logger.warning("knowledge retrieval failed: %s", exc)
+            return ""
+        if not hits:
+            return ""
+        lines = [f"- [{h.entry.kind}] {h.entry.title}: {h.entry.text[:300]}" for h in hits]
+        return "PROJECT MEMORY (retrieved):\n" + "\n".join(lines)
 
     async def run_research(
         self, project: Project, *, do_research: bool | None = None
@@ -196,6 +258,20 @@ class Orchestrator:
                 f"Research complete: {len(reports)} report(s)",
                 sources=sum(len(r.sources) for r in reports),
             )
+            # Persist research findings to project memory so later steps and
+            # future sessions can retrieve them without re-searching.
+            try:
+                store = get_knowledge_store()
+                for report in reports:
+                    await store.add(
+                        project_id=project.id,
+                        kind="research",
+                        title=report.question[:120],
+                        text=report.summary + "\n" + "\n".join(report.findings),
+                        source="research",
+                    )
+            except Exception as exc:  # noqa: BLE001 - memory is best-effort
+                logger.warning("knowledge write (research) failed: %s", exc)
         self._research_context = research_context
         await self._persist(project)
         return project
@@ -203,9 +279,16 @@ class Orchestrator:
     async def plan(self, project: Project) -> Project:
         """Build the dependency-aware task graph from the current spec."""
         await self._emit(project, "phase", "Planning engineering tasks", phase="planning")
-        graph = await self.planner.plan(
-            project.specification, research_context=getattr(self, "_research_context", "")
+        context = getattr(self, "_research_context", "")
+        # Add retrieved project memory to the planning context. This is what
+        # makes planning consistent across a resumed or long project: the
+        # planner sees what the project already decided.
+        memory = await self.recall(
+            project.specification.intent, project.id, limit=6
         )
+        if memory:
+            context = f"{context}\n\n{memory}" if context else memory
+        graph = await self.planner.plan(project.specification, research_context=context)
         project.task_graph = graph
         project.snapshot_workspace("plan", note=f"{len(graph.tasks)} tasks planned")
         await self._emit(

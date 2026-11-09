@@ -27,7 +27,41 @@ export const api = {
     request<{
       status: string;
       agent_server: { reachable: boolean; version: string | null; url: string };
+      intelligence?: {
+        internal_inference_ready: boolean;
+        external_models_enabled: boolean;
+        dev_gateway_enabled: boolean;
+        production_target: string;
+      };
     }>("/health"),
+
+  intelligence: () =>
+    request<{
+      gateway: {
+        independence: {
+          external_models_enabled: boolean;
+          dev_gateway_enabled: boolean;
+          production_backend_class: string;
+          external_fallback_on_internal_failure: boolean;
+        };
+        permitted_order: string[];
+        backends: {
+          name: string;
+          class: string;
+          model: string;
+          permitted: boolean;
+          key_policy: string;
+        }[];
+      };
+      self_hosted_runtime: {
+        engine_installed: boolean;
+        serving: boolean;
+        models_registered: number;
+        note: string;
+      };
+      memory: { backend: string; model_required: boolean };
+      model_free_fallbacks: { understanding: boolean; planning: boolean };
+    }>("/intelligence"),
 
   listProjects: () => request<{ items: ProjectSummary[] }>("/projects"),
 

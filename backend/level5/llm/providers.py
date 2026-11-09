@@ -74,12 +74,32 @@ class ProviderSpec:
 
 
 # Definitions for the providers the directive names. These are endpoint and
-# capability facts, not endorsements.
+# capability facts, not endorsements. The self-hosted runtime is the production
+# target; the rest are optional development assistants.
 _PROVIDERS: tuple[ProviderSpec, ...] = (
+    ProviderSpec(
+        name="self_hosted",
+        kind="local",
+        label="Self-hosted runtime (production target)",
+        base_url="",  # resolved at runtime from settings
+        api_key_env="LEVEL5_LOCAL_LLM_API_KEY",
+        model_env="LEVEL5_LOCAL_LLM_MODEL",
+        default_model="",
+        context_limit=32_000,
+        capabilities=frozenset(
+            {"tools", "streaming", "json_mode", "reasoning", "long_context"}
+        ),
+        managed=False,
+        notes=(
+            "An OpenAI-compatible inference server the operator controls "
+            "(vLLM, llama.cpp, Ollama, TGI). This is LEVEL 5's production "
+            "inference target and requires no external provider."
+        ),
+    ),
     ProviderSpec(
         name="openhands",
         kind="openhands",
-        label="OpenHands managed gateway",
+        label="OpenHands managed gateway (development)",
         base_url="",  # resolved at runtime from settings
         api_key_env="OH_SESSION_API_KEYS_0",
         default_model="openhands_Default",
@@ -87,9 +107,9 @@ _PROVIDERS: tuple[ProviderSpec, ...] = (
         capabilities=frozenset({"tools", "reasoning", "streaming", "json_mode"}),
         managed=True,
         notes=(
-            "The Agent Server's OpenAI-compatible /v1 gateway. Resolves the "
-            "operator's configured LLM profile and is the sanctioned path for "
-            "bare model calls inside the sandbox."
+            "The Agent Server's OpenAI-compatible /v1 gateway. A DEVELOPMENT "
+            "aid, not part of LEVEL 5's production inference architecture. "
+            "Disable with LEVEL5_ALLOW_DEV_GATEWAY=0."
         ),
     ),
     ProviderSpec(
@@ -180,6 +200,11 @@ class ProviderRegistry:
 
             base_url = get_settings().llm_gateway_url
             default_model = get_settings().llm_model
+        elif spec.name == "self_hosted":
+            from level5.config import get_settings
+
+            base_url = get_settings().local_llm_base_url
+            default_model = get_settings().local_llm_model
         elif spec.name == "local":
             base_url = _env("LOCAL_LLM_BASE_URL")
         if spec.model_env:
@@ -191,13 +216,26 @@ class ProviderRegistry:
         return [self._resolved(s) for s in self._specs if self._is_usable(s)]
 
     def _is_usable(self, spec: ProviderSpec) -> bool:
+        from level5.config import get_settings
+
+        settings = get_settings()
         resolved = self._resolved(spec)
+        # External providers are optional and off unless explicitly enabled.
+        if spec.name in ("openai", "anthropic", "google") and not (
+            settings.allow_external_models
+        ):
+            return False
+        # The OpenHands development gateway is a development aid.
+        if spec.name == "openhands" and not settings.allow_dev_gateway:
+            return False
         if not resolved.base_url:
             return False
         if resolved.managed:
-            from level5.config import get_settings
-
-            return bool(get_settings().agent_server_available)
+            return bool(settings.agent_server_available)
+        if spec.name == "self_hosted":
+            # A self-hosted server is "usable" when it answers on its URL; the
+            # key is optional for local runtimes.
+            return bool(settings.local_llm_base_url)
         return bool(_env(spec.api_key_env))
 
     def describe(self) -> list[dict[str, object]]:

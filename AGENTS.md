@@ -292,3 +292,32 @@ token module. A class not backed by a Meridian token simply does not exist.
 - **Docs map:** `docs/ROADMAP.md` (milestones + known limitations),
   `docs/RUNS.md` (live evidence per cycle), `docs/SECURITY.md`,
   `docs/HANDOVER.md`, `docs/ADR/`.
+
+## LEVEL 5 intelligence independence (permanent requirement)
+
+- **Rule:** LEVEL 5 must not depend on any one company's AI API. External model
+  providers are optional development assistants, OFF by default
+  (`LEVEL5_ALLOW_EXTERNAL_MODELS=0`). Never hard-code a provider; never fall
+  back to an external model when the internal runtime fails.
+- **The OpenHands dev gateway** (`LEVEL5_ALLOW_DEV_GATEWAY=1`, default on) is a
+  DEVELOPMENT aid, not production inference. Set `=0` to drop the Agent Server
+  transports entirely (the independence check does this).
+- **Gateway:** `level5/llm/gateway.py` routes bare model calls by backend class
+  (`internal` → `development` → `external`), capability and health. Internal is
+  the production target; external is only chosen when no internal backend is
+  configured AND the operator enabled external.
+- **Self-hosted runtime:** `level5/llm/runtime.py` discovers/starts
+  llama-server/vLLM/Ollama and keeps a model registry (`LEVEL5_LOCAL_MODELS_FILE`).
+  It downloads nothing. Config: `LEVEL5_LOCAL_LLM_BASE_URL` (default
+  `http://127.0.0.1:8080/v1`), `LEVEL5_LOCAL_LLM_MODEL`.
+- **Memory:** `level5/knowledge/store.py` — SQLite + BM25, no model. The
+  orchestrator writes spec/research to it and recalls it before planning.
+  Endpoints: `GET /api/projects/{id}/memory[?q=]`.
+- **Model-free core:** `level5/intelligence/fallbacks.py` — deterministic
+  understanding + per-domain task-graph templates. Understanding/planning use
+  them automatically when no model answers.
+- **Verify independence:** `cd backend && .venv/bin/python scripts/independence_check.py`
+  (9/9 expected). Tests: `tests/test_independence.py`. Posture: `GET /api/intelligence`.
+- **Do not claim LEVEL 5 has its own foundation model.** None has been trained.
+  A self-hosted third-party model is not "our model". Roadmap:
+  `docs/ARCHITECTURE-INDEPENDENCE.md`.

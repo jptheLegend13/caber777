@@ -109,6 +109,13 @@ async def health() -> dict[str, Any]:
     # "auto" stays healthy when the gateway is down because it falls back to
     # ask_agent; an explicit "gateway" transport does not.
     llm_ready = gateway_ok or transport in ("auto", "ask_agent")
+    from level5.llm.gateway import get_gateway
+    from level5.llm.runtime import get_local_runtime
+
+    try:
+        internal_ready = bool(get_gateway().route(internal_only=True))
+    except Exception:  # noqa: BLE001 - absence is a normal state
+        internal_ready = False
     return {
         "status": "ok" if llm_ready else "degraded",
         "service": "LEVEL 5",
@@ -118,6 +125,13 @@ async def health() -> dict[str, Any]:
             "gateway_models_available": gateway_ok,
             "ready": llm_ready,
         },
+        "intelligence": {
+            "internal_inference_ready": internal_ready,
+            "external_models_enabled": settings.allow_external_models,
+            "dev_gateway_enabled": settings.allow_dev_gateway,
+            "production_target": "self-hosted internal runtime",
+            "self_hosted_runtime": get_local_runtime().status(),
+        },
         "agent_server": {
             "url": settings.agent_server_url,
             "reachable": bool(server),
@@ -125,6 +139,38 @@ async def health() -> dict[str, Any]:
             "sdk_version": (server or {}).get("sdk_version"),
         },
         "caber_modules": [m.value for m in CABERModule],
+    }
+
+
+@router.get("/intelligence")
+async def intelligence_status() -> dict[str, Any]:
+    """The independence posture of LEVEL 5's intelligence layer.
+
+    Reports which inference backends are permitted and reachable, whether
+    external providers are enabled, and the state of the self-hosted runtime.
+    Contains no credential values.
+    """
+    from level5.llm.gateway import get_gateway
+    from level5.llm.providers import get_registry
+    from level5.llm.runtime import get_local_runtime
+
+    return {
+        "gateway": get_gateway().report(),
+        "providers": get_registry().report(),
+        "self_hosted_runtime": get_local_runtime().status(),
+        "memory": {
+            "backend": "sqlite+bm25",
+            "model_required": False,
+            "note": "Memory and retrieval work with no model and no network.",
+        },
+        "model_free_fallbacks": {
+            "understanding": True,
+            "planning": True,
+            "note": (
+                "When no inference backend is available, understanding and "
+                "planning fall back to deterministic rules."
+            ),
+        },
     }
 
 
@@ -381,6 +427,29 @@ async def export_project(project_id: str) -> FileResponse:
 async def list_attachments(project_id: str) -> dict[str, Any]:
     project = await _load(project_id)
     return {"items": [a.model_dump() for a in project.attachments]}
+
+
+@router.get("/projects/{project_id}/memory")
+async def project_memory(project_id: str, q: str = "", limit: int = 20) -> dict[str, Any]:
+    """Project memory: stored knowledge, and keyword retrieval over it.
+
+    With ``q`` set, returns the BM25-ranked matches; without it, returns the
+    most recent entries. Retrieval needs no model and no network.
+    """
+    from level5.knowledge.store import get_knowledge_store
+
+    await _load(project_id)
+    store = get_knowledge_store()
+    if q.strip():
+        hits = await store.search(q, project_id=project_id, limit=limit)
+        return {
+            "query": q,
+            "items": [
+                {**h.entry.as_dict(), "score": h.score} for h in hits
+            ],
+        }
+    entries = await store.all_for_project(project_id)
+    return {"items": [e.as_dict() for e in entries[-limit:]]}
 
 
 @router.post("/projects/{project_id}/attachments", status_code=201)

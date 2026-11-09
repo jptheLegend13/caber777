@@ -183,22 +183,51 @@ class LLMClient:
         order = {
             "gateway": ("gateway",),
             "ask_agent": ("ask_agent",),
-        }.get(transport, ("gateway", "ask_agent"))
+        }.get(transport, ("internal", "gateway", "ask_agent"))
+
+        # The "gateway" and "ask_agent" transports are OpenHands development
+        # infrastructure (the Agent Server). They are a development aid, not
+        # part of LEVEL 5's production inference, so they are dropped entirely
+        # when the dev gateway is disabled.
+        if not self.settings.allow_dev_gateway:
+            order = tuple(t for t in order if t not in ("gateway", "ask_agent"))
+
+        # The internal (self-hosted) runtime is the production backend. When it
+        # is not reachable the transport order simply drops it and the platform
+        # continues on whatever the operator has configured; it never switches
+        # to an external provider to hide an internal fault.
+        if "internal" in order and not self._internal_available():
+            order = tuple(t for t in order if t != "internal")
 
         # In auto mode, skip the gateway while it is known to be down, and skip
         # it outright when its model registry is empty (nothing to serve). An
         # explicit "gateway" transport always attempts it, so a failure is
         # still surfaced to the caller rather than hidden.
-        if transport == "auto" and len(order) > 1 and order[0] == "gateway":
+        if (
+            transport == "auto"
+            and "gateway" in order
+            and order[0] in ("internal", "gateway")
+        ):
             if time.monotonic() < self._gateway_down_until:
-                order = order[1:]
+                order = tuple(t for t in order if t != "gateway")
             elif not await self._gateway_usable():
-                logger.info("gateway model registry is empty; using ask_agent")
-                order = order[1:]
+                logger.info("gateway model registry is empty; skipping gateway")
+                order = tuple(t for t in order if t != "gateway")
+
+        if not order:
+            raise LLMError(
+                "no permitted inference transport is available "
+                "(internal runtime not running and the development gateway is "
+                "disabled)"
+            )
 
         errors: list[str] = []
         for name in order:
             try:
+                if name == "internal":
+                    return await self._chat_internal(messages, temperature=temperature,
+                                                     max_tokens=max_tokens,
+                                                     response_format=response_format)
                 if name == "gateway":
                     return await self._chat_gateway(
                         messages,
@@ -210,11 +239,48 @@ class LLMClient:
                 return await self._chat_ask_agent(messages)
             except Exception as exc:  # noqa: BLE001 - try the next transport
                 errors.append(f"{name}: {exc}")
-                if name == "gateway" and len(order) > 1:
+                if name == "gateway" and "ask_agent" in order:
                     self._gateway_down_until = time.monotonic() + _GATEWAY_COOLDOWN_S
                 if len(order) > 1:
                     logger.warning("LLM transport %s failed: %s", name, exc)
         raise LLMError("LLM request failed on all transports: " + " | ".join(errors))
+
+    def _internal_available(self) -> bool:
+        """True when a self-hosted internal backend is permitted and reachable."""
+        try:
+            from level5.llm.gateway import get_gateway
+
+            get_gateway().route(internal_only=True)
+            return True
+        except Exception:  # noqa: BLE001 - absence is not an error here
+            return False
+
+    async def _chat_internal(
+        self,
+        messages: list[dict[str, Any]],
+        *,
+        temperature: float = 0.2,
+        max_tokens: int | None = None,
+        response_format: dict[str, Any] | None = None,
+    ) -> LLMResult:
+        """Call the self-hosted internal runtime through the model gateway."""
+        from level5.llm.gateway import get_gateway
+
+        result = await get_gateway().chat(
+            messages,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            response_format=response_format,
+            required={"json_mode"} if response_format else None,
+        )
+        return LLMResult(
+            text=result.text,
+            usage=LLMUsage(
+                total_tokens=int(result.usage.get("total_tokens", 0) or 0),
+                model=result.model,
+            ),
+            raw={"backend": result.backend, "backend_class": result.backend_class},
+        )
 
     async def _chat_gateway(
         self,

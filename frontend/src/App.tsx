@@ -67,6 +67,11 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [agentServer, setAgentServer] = useState<{ reachable: boolean; version: string | null } | null>(null);
+  const [intel, setIntel] = useState<{
+    internal_inference_ready: boolean;
+    external_models_enabled: boolean;
+    dev_gateway_enabled: boolean;
+  } | null>(null);
   const [activity, setActivity] = useState<StreamEvent[]>([]);
   const [roles, setRoles] = useState<AgentRole[]>([]);
   const [scene, setScene] = useState<Scene | null>(null);
@@ -96,7 +101,7 @@ export default function App() {
 
   // Initial load ----------------------------------------------------------- //
   useEffect(() => {
-    api.health().then((h) => setAgentServer(h.agent_server)).catch(() => setAgentServer(null));
+    api.health().then((h) => { setAgentServer(h.agent_server); setIntel(h.intelligence ?? null); }).catch(() => setAgentServer(null));
     api.listProjects().then((r) => setProjects(r.items)).catch(() => undefined);
     api
       .agents()
@@ -258,6 +263,24 @@ export default function App() {
           <span className={`pill ${agentServer?.reachable ? "ok" : "bad"}`}>
             Agent Server {agentServer?.reachable ? `v${agentServer.version}` : "offline"}
           </span>
+          {intel && (
+            <span
+              className={`pill ${intel.internal_inference_ready ? "ok" : "muted"}`}
+              title={
+                intel.internal_inference_ready
+                  ? "Self-hosted internal inference is serving (production backend)"
+                  : `No self-hosted runtime serving. External models: ${
+                      intel.external_models_enabled ? "enabled" : "disabled"
+                    }. Core intelligence runs deterministically without a model.`
+              }
+            >
+              {intel.internal_inference_ready
+                ? "Internal inference"
+                : intel.external_models_enabled
+                  ? "External (opt-in)"
+                  : "Model-free core"}
+            </span>
+          )}
           <span className="pill muted">{roles.length} specialist roles</span>
         </div>
       </header>

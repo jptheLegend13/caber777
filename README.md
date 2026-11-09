@@ -35,6 +35,10 @@ that actually run.
 | Innovation-to-prototype engine (prior art → prototype → evaluation) | working |
 | Self-improvement loop with an independent adversarial reviewer | working |
 | Competitive benchmark suite | scaffolding only — no external system has been run; no superiority claim is made (see `docs/ROADMAP.md`) |
+| Internal model gateway (provider-independent, external off by default) | working |
+| Self-hosted inference runtime manager (start/stop, model registry) | implemented; not started here (no runtime binary/GPU on this host) |
+| Local memory + retrieval (SQLite + BM25, no model) | working |
+| Model-free core (deterministic understanding + planning) | working — 9/9 independence checks pass |
 
 ## Architecture
 

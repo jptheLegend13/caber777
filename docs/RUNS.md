@@ -398,3 +398,39 @@ cd backend && .venv/bin/python -m pytest -q
   does not certify structural safety.
 - Agent success rates depend on the model. Where a task failed, the failure is in
   the record above.
+
+---
+
+## Run 8 — intelligence independence verified live
+
+The independence requirement (LEVEL 5 must not depend on any one company's AI
+API) is implemented and verified. Full architecture: `docs/ARCHITECTURE-INDEPENDENCE.md`.
+
+`backend/scripts/independence_check.py`, run with `LEVEL5_ALLOW_EXTERNAL_MODELS=0`
+and `LEVEL5_ALLOW_DEV_GATEWAY=0` (every external provider and the OpenHands
+development gateway disabled):
+
+```
+[PASS] Reasoning (deterministic understanding + planning): domain=web_app requirements=2 tasks=6
+[PASS] Agent coordination (roles + dependency graph): roles=5 deps_ok=True has_edges=True
+[PASS] Memory and retrieval (BM25, no model): hits=1 top=Database
+[PASS] External providers disabled / no fallback: external_enabled=False dev_gateway_enabled=False external_fallback=False
+[PASS] No external reachable for model call: model call correctly failed with no permitted backend
+[PASS] Project creation and persistence: stored+reloaded tasks=5
+[PASS] Code generation and execution (local): exit=0 output='lines=2 words=4 chars=24'
+[PASS] Error recovery (detect defect -> repair -> pass): detected=True repaired_pass=True
+[PASS] Model-free fallback engaged in a real call path: domain=mobile_app tasks=6
+
+9/9 core capabilities operated with no external model.
+```
+
+The live backend reports the posture at `GET /api/intelligence`: external
+models disabled, dev gateway enabled only as a development aid, production
+backend class `internal`, and `external_fallback_on_internal_failure: false`.
+
+**What is honestly not achieved.** No foundation model has been trained; LEVEL 5
+does not have its own model. Generative code authoring with a language model
+still needs either the self-hosted runtime (no runtime binary or GPU exists on
+this host) or the development gateway. The self-hosted runtime manager's start
+path has not been exercised against a real model for the same reason. Regression
+suite: **272 passed**.

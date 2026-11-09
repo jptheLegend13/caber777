@@ -102,7 +102,17 @@ class UnderstandingEngine:
             {"role": "system", "content": _SYSTEM},
             {"role": "user", "content": user_content},
         ]
-        data, usage = await self.llm.chat_json(messages, temperature=0.1, max_tokens=4000)
+        try:
+            data, usage = await self.llm.chat_json(
+                messages, temperature=0.1, max_tokens=4000
+            )
+        except Exception as exc:  # noqa: BLE001 - degrade, never stop
+            # No usable model: fall back to the deterministic understanding so
+            # the platform still produces a structured specification.
+            from level5.intelligence.fallbacks import spec_from_request
+
+            logger.warning("model understanding unavailable (%s); using rules", exc)
+            return spec_from_request(request)
         logger.info(
             "understanding complete (%s tokens)", usage.total_tokens
         )

@@ -51,7 +51,9 @@ class Settings:
         )
 
         # Model used by delegated agent conversations (provider/model form) and
-        # the proxy those conversations authenticate against.
+        # the proxy those conversations authenticate against. These are the
+        # DEVELOPMENT defaults; the independence layer below can override them
+        # with a self-hosted endpoint.
         self.llm_model_raw: str = _env(
             "LEVEL5_AGENT_LLM_MODEL", "openhands/deepseek-v4.1-flash"
         )
@@ -59,10 +61,46 @@ class Settings:
             "LEVEL5_AGENT_LLM_BASE_URL", "https://llm-proxy.app.all-hands.dev/"
         )
 
+        # Intelligence independence ---------------------------------------------
+        # LEVEL 5's production target is a self-hosted, operator-controlled
+        # inference runtime. External providers are optional development
+        # assistants and are OFF unless the operator explicitly enables them.
+        #   LEVEL5_ALLOW_EXTERNAL_MODELS=0  (default) never contact an external
+        #       model provider, and never fall back to one when the internal
+        #       runtime fails.
+        #   LEVEL5_ALLOW_EXTERNAL_MODELS=1  permit external providers as an
+        #       explicit, replaceable option (never a hard requirement).
+        self.allow_external_models: bool = (
+            _env("LEVEL5_ALLOW_EXTERNAL_MODELS", "0") == "1"
+        )
+        # The OpenHands development gateway is a DEVELOPMENT aid, not part of
+        # LEVEL 5's production inference. It is on by default so the platform
+        # runs in this development environment, but production (and the
+        # independence test) sets LEVEL5_ALLOW_DEV_GATEWAY=0 to prove the
+        # platform does not depend on it.
+        self.allow_dev_gateway: bool = (
+            _env("LEVEL5_ALLOW_DEV_GATEWAY", "1") == "1"
+        )
+        # Self-hosted OpenAI-compatible inference runtime (vLLM/llama.cpp/
+        # Ollama). When serving, this is the preferred production backend.
+        self.local_llm_base_url: str = _env(
+            "LEVEL5_LOCAL_LLM_BASE_URL", "http://127.0.0.1:8080/v1"
+        )
+        self.local_llm_model: str = _env("LEVEL5_LOCAL_LLM_MODEL", "")
+        self.local_llm_api_key: str = _env("LEVEL5_LOCAL_LLM_API_KEY", "not-needed")
+        self.local_llm_port: str = _env("LEVEL5_LOCAL_LLM_PORT", "8080")
+        self.local_llm_context: str = _env("LEVEL5_LOCAL_LLM_CONTEXT", "8192")
+        self.local_llm_start_timeout: float = float(
+            _env("LEVEL5_LOCAL_LLM_START_TIMEOUT", "120")
+        )
+
         # Workspaces / storage ---------------------------------------------------
         self.data_dir: Path = Path(_env("LEVEL5_DATA_DIR", str(_default_data_dir())))
         self.projects_dir: Path = self.data_dir / "projects"
         self.db_path: Path = self.data_dir / "level5.db"
+        self.local_models_file: Path = Path(
+            _env("LEVEL5_LOCAL_MODELS_FILE", str(self.data_dir / "models.json"))
+        )
 
         # Execution --------------------------------------------------------------
         # Docker runtime for agent conversations. "local" runs in-process; the
