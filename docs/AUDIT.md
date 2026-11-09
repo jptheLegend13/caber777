@@ -95,6 +95,19 @@ model registry and `/api/health` now reports `llm.transport`,
 explicit `gateway` transport cannot serve models. `auto` stays `ok` because it
 falls back to `ask_agent`.
 
+### F7 — Command box bypassed the specialist intelligences (severity: high) — **FIXED this cycle**
+
+The main product surface (`POST /api/projects/{id}/run`) always planned a
+generic engineering task graph. A building request or a novel-idea request
+therefore never reached the Building Creation or Innovation engines: the
+dedicated endpoints existed, but the command box never routed to them, so the
+"one command interface, three intelligences" architecture (§12) was not
+actually wired end to end. Fix: the orchestrator's planning was split into
+`understand()` + `plan()`, and `_run_full_pipeline` now dispatches on the
+classified CABER module — buildings → `CABERBuildingService`, novel ideas →
+`innovate_project`, everything else → the task graph. Covered by
+`tests/test_routing.py`.
+
 ## 3. Capability classification
 
 ### Platform / control plane
@@ -111,6 +124,8 @@ falls back to `ask_agent`.
 | SSE live activity stream | IV | `/stream`; heartbeat every 15 s |
 | Version history snapshots | IV | `Project.snapshot`; `docs/RUNS.md` |
 | Real agent execution (terminal, file_editor) | IV | live probe + acceptance run (82 artifacts) |
+| Command-box routing to A/B/C | IV (new) | `_run_full_pipeline` dispatches on the CABER module; `tests/test_routing.py` |
+| Shared sandboxed Python runner | IV (new) | `execution.py`; `tests/test_execution.py` |
 | Frontend workspace UI (tabs, SSE) | IV | `npm run build` passes; served at `/` |
 | Voice input | IU | `useVoiceInput.ts`; needs a real browser session (no mic in CI) |
 | File/image upload | IV (new) | `POST /attachments`; see F4 |
@@ -142,8 +157,8 @@ falls back to `ask_agent`.
 | Computational model generation + execution | IV (after F1 fix) | `tests/test_verification.py`; was 500 |
 | One informed repair attempt on a failed model | IV | `_repair_model` |
 | Independent verification + confidence | IV | `SolutionReport.verify` |
-| Constraint solving / alternative search | MI | not a separate module |
-| **Innovation-to-prototype engine (§9)** | **MI** | no dedicated engine; the research path partially covers it |
+| Constraint solving / alternative search | PA | alternatives are generated inside the innovation engine |
+| **Innovation-to-prototype engine (§9)** | **IV (new)** | `innovation.py`; live run found prior art, ran a 229-line simulation and measured 6.35% mean hit-ratio gain over LRU across 18 configs (p=1.2e-05) |
 
 ### CABER Intelligence C — Building creation
 
@@ -170,9 +185,10 @@ falls back to `ask_agent`.
 
 ## 4. Test suite
 
-`backend/.venv/bin/python -m pytest -q` → **138 passed** (before this cycle's
-additions). The suite replaces only the network boundary in orchestrator tests
-and states that in the module.
+`backend/.venv/bin/python -m pytest -q` → **174 passed** (this cycle: 153 → 174;
+added `test_execution.py`, `test_innovation.py`, `test_routing.py`). The suite
+replaces only the network boundary in orchestrator tests and states that in the
+module.
 
 ## 5. Honest limitations carried forward
 
