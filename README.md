@@ -28,7 +28,8 @@ that actually run.
 | CABER building generation → interactive 3D viewport | working |
 | Independent validation with a published score | working |
 | Live progress streaming (SSE) + file browser | working |
-| Version history and generated report | working |
+| Real git version history per project (list, diff, restore, zip export) | working |
+| Domain-aware preview (live browser preview; artifact preview for other kinds) | working |
 | Command box routing to the three CABER intelligences | working |
 | File, image and reference-document attachments | working |
 | Innovation-to-prototype engine (prior art → prototype → evaluation) | working |
