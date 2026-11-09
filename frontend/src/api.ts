@@ -68,6 +68,29 @@ export const api = {
 
   report: (id: string) => request<{ report: string }>(`/projects/${id}/report`),
 
+  revisions: (id: string) =>
+    request<{
+      items: {
+        sha: string;
+        short: string;
+        message: string;
+        committed_at: string;
+        files_changed: number;
+      }[];
+      count: number;
+    }>(`/projects/${id}/revisions`),
+
+  revisionDiff: (id: string, sha: string) =>
+    request<{ sha: string; diff: string }>(`/projects/${id}/revisions/${sha}/diff`),
+
+  restoreRevision: (id: string, sha: string, run = false) =>
+    request<{ restored: boolean; sha: string; rerunning: boolean }>(
+      `/projects/${id}/restore`,
+      { method: "POST", body: JSON.stringify({ sha, run }) },
+    ),
+
+  exportUrl: (id: string) => `${BASE}/projects/${id}/export`,
+
   agents: () =>
     request<{ count: number; disciplines: Record<string, AgentRole[]> }>("/agents"),
 

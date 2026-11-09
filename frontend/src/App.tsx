@@ -13,6 +13,24 @@ import type {
 
 type Tab = "overview" | "research" | "activity" | "files" | "preview" | "tests" | "output";
 
+const DOMAIN_LABEL: Record<string, string> = {
+  web_app: "Web application",
+  mobile_app: "Mobile application",
+  desktop_app: "Desktop application",
+  enterprise_software: "Enterprise software",
+  backend_api: "Backend API",
+  ai_application: "AI application",
+  ai_agent: "AI agent",
+  multi_agent_system: "Multi-agent system",
+  data_system: "Data system",
+  cloud_devops: "Cloud / DevOps",
+  research: "Research",
+  simulation: "Simulation",
+  architecture_3d: "Building / 3D",
+  design_system: "Design system",
+  general: "General",
+};
+
 const STATUS_LABEL: Record<string, string> = {
   draft: "Draft",
   planning: "Planning",
@@ -65,6 +83,11 @@ export default function App() {
     build: { status: string; name: string; message?: string } | null;
   } | null>(null);
   const unsubRef = useRef<(() => void) | null>(null);
+  const projectIdRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    projectIdRef.current = project?.id ?? null;
+  }, [project]);
 
   const appendTranscript = useCallback((text: string) => {
     setCommand((current) => (current ? `${current} ${text}` : text));
@@ -131,6 +154,14 @@ export default function App() {
 
   const refreshList = useCallback(() => {
     api.listProjects().then((r) => setProjects(r.items)).catch(() => undefined);
+  }, []);
+
+  const reloadProject = useCallback(() => {
+    if (!projectIdRef.current) return;
+    api
+      .getProject(projectIdRef.current)
+      .then((r) => setProject(r.project))
+      .catch(() => undefined);
   }, []);
 
   const submit = useCallback(async () => {
@@ -373,7 +404,7 @@ export default function App() {
                     viewerUrl={project ? `/api/projects/${project.id}/caber/viewer` : "#"}
                   />
                 ) : (
-                  <WebPreviewTab
+                  <DomainPreview
                     project={project}
                     status={preview}
                     onRefresh={() =>
@@ -382,7 +413,7 @@ export default function App() {
                   />
                 ))}
               {tab === "tests" && <TestsTab project={project} />}
-              {tab === "output" && <OutputTab project={project} />}
+              {tab === "output" && <OutputTab project={project} onChanged={reloadProject} />}
             </>
           ) : (
             <section className="welcome">
@@ -702,6 +733,120 @@ function FilesTab({
   );
 }
 
+function DomainPreview({
+  project,
+  status,
+  onRefresh,
+}: {
+  project: Project;
+  status: {
+    available: boolean;
+    preview_url: string | null;
+    package_dir: string | null;
+    build: { status: string; name: string; message?: string } | null;
+  } | null;
+  onRefresh: () => void;
+}) {
+  const domain = project.specification.domain;
+  const webDomains = ["web_app", "enterprise_software", "design_system"];
+  const backendDomains = [
+    "backend_api",
+    "data_system",
+    "cloud_devops",
+    "ai_application",
+    "ai_agent",
+    "multi_agent_system",
+  ];
+
+  // A web application (or an app-like deliverable) gets the real browser preview.
+  if (webDomains.includes(domain)) {
+    return <WebPreviewTab project={project} status={status} onRefresh={onRefresh} />;
+  }
+
+  // Everything else gets a preview suited to its kind, backed by the real
+  // workspace files and the honest build/run status — never a fake animation.
+  const entryPoints = project.artifacts
+    .map((a) => a.path)
+    .filter(
+      (p) =>
+        /(^|\/)(main|app|index|server|cli)\.(py|js|ts|tsx|dart|go|rs|java|cs|kt|swift)$/i.test(p) ||
+        /(^|\/)(README|readme)\.md$/.test(p),
+    )
+    .slice(0, 8);
+
+  return (
+    <div className="grid preview-grid">
+      <section className="panel">
+        <div className="panel-head">
+          <h3>{DOMAIN_LABEL[domain] ?? "Deliverable"} preview</h3>
+          <div className="view-controls">
+            <button onClick={onRefresh}>Refresh</button>
+            <a href={api.exportUrl(project.id)}>Export zip</a>
+          </div>
+        </div>
+        <p className="hint-note">
+          {domain === "mobile_app"
+            ? "A mobile project. Open the generated project in its toolchain (Flutter / React Native / Android Studio) to run it on a device or emulator; the entry points below are the real sources."
+            : domain === "desktop_app"
+              ? "A desktop project. Run the generated entry point with its runtime (for example `python main.py`, `npm run tauri dev`, or the packaged binary)."
+              : backendDomains.includes(domain)
+                ? "A backend / service project. Start the generated server and exercise its API; the entry point and the run evidence are below."
+                : "Inspect the generated deliverable: entry points, artifacts and the verification results."}
+        </p>
+        <h4>Entry points</h4>
+        {entryPoints.length === 0 ? (
+          <p className="empty-note">
+            No entry points detected yet. The Files tab lists everything produced in the workspace.
+          </p>
+        ) : (
+          <ul className="plain small">
+            {entryPoints.map((path) => (
+              <li key={path}>
+                <code className="sha">{path}</code>
+              </li>
+            ))}
+          </ul>
+        )}
+        <h4>Run evidence</h4>
+        {project.tests.length === 0 ? (
+          <p className="empty-note">No run or test evidence recorded yet.</p>
+        ) : (
+          <ul className="plain small">
+            {project.tests.slice(-10).map((t) => (
+              <li key={t.id} className={`test-${t.status}`}>
+                <span className="activity-kind">{t.status}</span> {t.suite}: {t.name}
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+      <section className="panel">
+        <h3>Build &amp; run status</h3>
+        {status?.build ? (
+          <dl className="kv">
+            <dt>Status</dt>
+            <dd className={status.build.status === "passed" ? "pass" : "fail"}>{status.build.status}</dd>
+            <dt>Command</dt>
+            <dd>{status.build.name}</dd>
+            {status.package_dir && (
+              <>
+                <dt>Package</dt>
+                <dd>{status.package_dir}</dd>
+              </>
+            )}
+          </dl>
+        ) : (
+          <p className="empty-note">
+            No build was attempted for this domain. That is expected for non-web projects; their
+            verification runs through the test and review tasks instead.
+          </p>
+        )}
+        {status?.build?.message && <pre className="log">{status.build.message}</pre>}
+      </section>
+    </div>
+  );
+}
+
 function WebPreviewTab({
   project,
   status,
@@ -918,27 +1063,114 @@ function TestsTab({ project }: { project: Project }) {
   );
 }
 
-function OutputTab({ project }: { project: Project }) {
+function OutputTab({ project, onChanged }: { project: Project; onChanged?: () => void }) {
   const [report, setReport] = useState<string | null>(null);
   const [version, setVersion] = useState(0);
+  const [revisions, setRevisions] = useState<
+    { sha: string; short: string; message: string; committed_at: string; files_changed: number }[]
+  >([]);
+  const [diff, setDiff] = useState<{ sha: string; text: string } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState<string | null>(null);
+
+  const loadRevisions = () => {
+    api
+      .revisions(project.id)
+      .then((r) => setRevisions(r.items))
+      .catch(() => setRevisions([]));
+  };
+
   useEffect(() => {
     api
       .report(project.id)
       .then((r) => setReport(r.report))
       .catch(() => setReport(null));
+    loadRevisions();
   }, [project.id, version]);
+
+  const showDiff = async (sha: string) => {
+    try {
+      const r = await api.revisionDiff(project.id, sha);
+      setDiff({ sha, text: r.diff });
+    } catch (error) {
+      setNote(`Could not load diff: ${(error as Error).message}`);
+    }
+  };
+
+  const restore = async (sha: string) => {
+    setBusy(true);
+    setNote(null);
+    try {
+      await api.restoreRevision(project.id, sha, false);
+      setNote(
+        `Workspace restored to ${sha.slice(0, 8)}. A pre-restore revision was saved, so this can be undone.`,
+      );
+      setVersion((v) => v + 1);
+      onChanged?.();
+    } catch (error) {
+      setNote(`Restore failed: ${(error as Error).message}`);
+    } finally {
+      setBusy(false);
+    }
+  };
 
   return (
     <div className="grid two">
       <section className="panel">
         <div className="panel-head">
           <h3>Final output</h3>
-          <button onClick={() => setVersion((v) => v + 1)}>Reload report</button>
+          <div className="view-controls">
+            <button onClick={() => setVersion((v) => v + 1)}>Reload report</button>
+            <a href={api.exportUrl(project.id)}>Export zip</a>
+          </div>
         </div>
         {report ? <pre className="report-view">{report}</pre> : <p className="empty-note">Report not generated yet.</p>}
+        <h4>Event log</h4>
+        <ul className="plain small">
+          {project.events.slice(-40).map((event) => (
+            <li key={event.id}>
+              <span className="activity-kind">{event.kind}</span> {event.message}
+            </li>
+          ))}
+        </ul>
       </section>
       <section className="panel">
-        <h3>Version history</h3>
+        <div className="panel-head">
+          <h3>Version history</h3>
+          <button onClick={loadRevisions}>Refresh</button>
+        </div>
+        {note && <div className="hint-note">{note}</div>}
+        {revisions.length === 0 ? (
+          <p className="empty-note">No revisions yet. Each pipeline step is committed automatically.</p>
+        ) : (
+          <ul className="version-list">
+            {revisions.map((rev) => (
+              <li key={rev.sha}>
+                <strong>{rev.message}</strong>
+                <code className="sha">{rev.short}</code>
+                <span className="activity-time">{formatTime(rev.committed_at)}</span>
+                <em>
+                  {rev.files_changed} file{rev.files_changed === 1 ? "" : "s"} changed
+                </em>
+                <span className="rev-actions">
+                  <button onClick={() => showDiff(rev.sha)}>Diff</button>
+                  <button onClick={() => restore(rev.sha)} disabled={busy}>
+                    Restore
+                  </button>
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+        {diff && (
+          <>
+            <h4>
+              Diff for <code className="sha">{diff.sha.slice(0, 8)}</code>
+            </h4>
+            <pre className="log">{diff.text}</pre>
+          </>
+        )}
+        <h4>Labelled snapshots</h4>
         <ul className="version-list">
           {project.versions?.map((snap: any) => (
             <li key={snap.id}>
@@ -949,14 +1181,6 @@ function OutputTab({ project }: { project: Project }) {
             </li>
           ))}
           {(!project.versions || project.versions.length === 0) && <li className="empty-note">No versions yet.</li>}
-        </ul>
-        <h4>Event log</h4>
-        <ul className="plain small">
-          {project.events.slice(-40).map((event) => (
-            <li key={event.id}>
-              <span className="activity-kind">{event.kind}</span> {event.message}
-            </li>
-          ))}
         </ul>
       </section>
     </div>
