@@ -63,12 +63,23 @@ project `proj_2d3b48e3f1cf` the failed task reports only
 cause is unrecoverable after the fact. Fix: record the conversation id and the
 classified error on failure.
 
-### F3 — No per-task workspace isolation (severity: medium) — **ADDRESSED this cycle**
+### F3 — No per-task workspace isolation (severity: medium) — **FIXED and live-verified**
 
-All tasks for a project share one directory. The directive requires isolated
-worktrees/branches so agents cannot overwrite each other. Fix: opt-in git
-worktree per task (`LEVEL5_TASK_WORKTREES`), with the task's changes merged back
-by the orchestrator.
+All tasks for a project shared one directory, so two parallel agents could write
+the same file and silently overwrite each other. Fix: an opt-in git worktree per
+task (`LEVEL5_TASK_WORKTREES=1`, `worktrees.py`). Each task runs in its own
+worktree on a `level5/<task-id>` branch; on success the branch is squash-merged
+into the project workspace under an async lock, so parallel commits are combined
+in a coordinated order instead of racing. A merge conflict falls back to copying
+the task's changed files rather than discarding either task's committed work.
+Isolation is best-effort: when it cannot be set up the task runs in the shared
+workspace and a `task_isolation` event says so, rather than claiming isolation.
+
+Live-verified with a real agent conversation: the task ran in
+`.level5-worktrees/<task>`, the agent created `hello.txt` there, it was merged
+into the shared workspace and committed as `[backend_engineer] Write hello.txt`,
+and the worktree was removed afterwards. Covered by `tests/test_worktrees.py`
+(7 tests, including the real conflict-fallback path).
 
 ### F4 — File/image upload is missing (severity: medium) — **FIXED this cycle**
 
@@ -169,7 +180,7 @@ still attempts it, so the failure is surfaced rather than hidden. Covered by
 | Self-benchmarking (own metrics) | IV | `tests/test_benchmarks.py` |
 | **Competitive benchmark suite** | **PA (new)** | fixed task set, deterministic scorer, per-system aggregation and REST endpoints (`tests/test_benchmark_suite.py`); **no external system has been run** — the environment cannot drive Claude Code, Codex, Cursor, Devin, Factory or Antigravity under equivalent conditions. No superiority claim is made |
 | Authentication / multi-user accounts | **MI** | Single-operator tool; no account system |
-| Per-task git worktree isolation | PA (new) | opt-in flag (F3) |
+| Per-task git worktree isolation | IV (new) | `worktrees.py`; real worktree + squash-merge; live-verified (F3) |
 
 ### CABER Intelligence A — Application creation
 
@@ -217,9 +228,9 @@ still attempts it, so the failure is surfaced rather than hidden. Covered by
 
 ## 4. Test suite
 
-`backend/.venv/bin/python -m pytest -q` → **195 passed** (this cycle: 179 → 195;
-added `test_benchmark_suite.py`, `test_llm_transport.py`, dispatch and
-regression tests). The suite replaces only the network boundary in orchestrator
+`backend/.venv/bin/python -m pytest -q` → **202 passed** (this cycle: 179 → 202;
+added `test_benchmark_suite.py`, `test_llm_transport.py`, `test_worktrees.py`,
+dispatch and regression tests). The suite replaces only the network boundary in orchestrator
 tests and states that in the module.
 
 ## 5. Honest limitations carried forward

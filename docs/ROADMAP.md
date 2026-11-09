@@ -28,6 +28,9 @@ Legend: `[x]` done and verified · `[~]` partially implemented · `[ ]` not star
 - [x] Persistent project state (SQLite + JSON), resumable.
 - [x] Review and repair tasks in the standard plan shape.
 - [x] Agent activity interface (SSE stream + activity tab).
+- [x] Per-task git worktree isolation so parallel agents cannot overwrite each
+  other's files (`worktrees.py`; opt-in via `LEVEL5_TASK_WORKTREES=1`;
+  `tests/test_worktrees.py`; live-verified with a real agent conversation).
 
 ## MILESTONE 3 — Universal creation capability — `[~]`
 

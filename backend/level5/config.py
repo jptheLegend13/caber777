@@ -84,6 +84,10 @@ class Settings:
         )
         # Parallelism for independent task-graph nodes.
         self.max_parallel_tasks: int = int(_env("LEVEL5_MAX_PARALLEL", "3"))
+        # Give each task its own git worktree so parallel agents cannot
+        # overwrite each other's files. Requires the project workspace to be a
+        # git repository; the orchestrator initialises one on first use.
+        self.task_worktrees: bool = _env("LEVEL5_TASK_WORKTREES", "0") == "1"
 
         # Research ---------------------------------------------------------------
         self.research_enabled: bool = _env("LEVEL5_RESEARCH_ENABLED", "1") == "1"

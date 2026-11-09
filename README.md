@@ -145,8 +145,9 @@ All settings are environment variables with the `LEVEL5_` prefix (see
 | `LEVEL5_LLM_MODEL` | `openhands_Default` | Model id |
 | `LEVEL5_LLM_API_KEY` | session key | Model API key |
 | `LEVEL5_DATA_DIR` | `backend/.level5-data` | Project storage |
-| `LEVEL5_MAX_PARALLEL_TASKS` | `3` | Concurrent agent tasks |
-| `LEVEL5_DEFAULT_MAX_ITERATIONS` | `120` | Agent iteration budget per task |
+| `LEVEL5_MAX_PARALLEL` | `3` | Concurrent agent tasks |
+| `LEVEL5_TASK_WORKTREES` | `0` | Isolate each task in its own git worktree (`1` to enable) |
+| `LEVEL5_MAX_ITERATIONS` | `400` | Agent iteration budget per task |
 | `TAVILY_API_KEY` / `BRAVE_API_KEY` | unset | Optional search providers |
 
 ## Tests

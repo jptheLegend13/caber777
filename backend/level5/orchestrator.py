@@ -36,6 +36,7 @@ from level5.models import (
 )
 from level5.runtime.agent_server import AgentServerClient, ExecutionResult
 from level5.storage.store import get_store
+from level5.worktrees import WorktreeError, WorktreeManager, ensure_repo
 
 logger = logging.getLogger("level5.orchestrator")
 
@@ -126,6 +127,8 @@ class Orchestrator:
         self.bus = get_event_bus()
         self.store = get_store()
         self._running: set[str] = set()
+        self._worktree_lock = asyncio.Lock()
+        self._worktrees: WorktreeManager | None = None
 
     # ------------------------------------------------------------------ #
     # Planning pipeline
@@ -356,7 +359,8 @@ class Orchestrator:
     async def _run_task(self, project: Project, task: Task) -> None:
         role = get_role(task.agent_role)
         prompt = self._task_prompt(project, task)
-        workspace = str(Path(project.workspace_path))
+        shared_workspace = str(Path(project.workspace_path))
+        workspace, worktree = await self._prepare_workspace(project, task, shared_workspace)
 
         while True:
             task.status = TaskStatus.RUNNING
@@ -407,6 +411,8 @@ class Orchestrator:
             if result.succeeded:
                 task.conversation_id = result.conversation_id
                 project.conversation_ids.append(result.conversation_id)
+                if worktree is not None:
+                    await self._integrate_worktree(project, task)
                 self._record_artifacts(project, task, result)
                 project.tests.extend(self._tests_from(result, task))
                 task.status = TaskStatus.SUCCEEDED
@@ -440,6 +446,8 @@ class Orchestrator:
                 await asyncio.sleep(self._retry_delay(task.attempts))
                 continue
             self._fail_task(task, error, result=result)
+            if worktree is not None:
+                await self._cleanup_worktree(task)
             await self._emit(
                 project, "task_failed", f"[{role.title}] {task.title}: {error}",
                 task_id=task.id,
@@ -447,6 +455,85 @@ class Orchestrator:
             )
             await self._persist(project)
             return
+
+    async def _prepare_workspace(
+        self, project: Project, task: Task, shared_workspace: str
+    ) -> tuple[str, bool]:
+        """Return the directory the agent should work in and whether it is isolated.
+
+        With worktrees enabled each task gets its own git worktree so parallel
+        agents cannot overwrite one another's files; the changes are merged back
+        into the shared workspace on success. Isolation is best-effort: if it
+        cannot be set up the task runs in the shared workspace and an event says
+        so, rather than pretending the work was isolated.
+        """
+        if not self.settings.task_worktrees:
+            return shared_workspace, False
+        try:
+            manager = await self._ensure_worktree_manager(project)
+            worktree = await asyncio.to_thread(manager.create, task.id)
+        except (WorktreeError, OSError) as exc:
+            await self._emit(
+                project,
+                "task_isolation",
+                f"Worktree isolation unavailable for [{task.id}]; using the shared "
+                f"workspace ({exc})",
+                task_id=task.id,
+            )
+            return shared_workspace, False
+        task.worktree = str(worktree.path)
+        await self._emit(
+            project,
+            "task_isolation",
+            f"Isolated [{task.id}] in a git worktree",
+            task_id=task.id,
+            path=str(worktree.path),
+        )
+        return str(worktree.path), True
+
+    async def _ensure_worktree_manager(self, project: Project) -> WorktreeManager:
+        if self._worktrees is not None:
+            return self._worktrees
+        async with self._worktree_lock:
+            if self._worktrees is None:
+                root = Path(project.workspace_path)
+                await asyncio.to_thread(ensure_repo, root)
+                self._worktrees = WorktreeManager(root, root / ".level5-worktrees")
+        return self._worktrees
+
+    async def _integrate_worktree(self, project: Project, task: Task) -> None:
+        """Merge the task's worktree back into the shared workspace under a lock."""
+        manager = self._worktrees
+        if manager is None:
+            return
+        try:
+            async with self._worktree_lock:
+                changed = await asyncio.to_thread(
+                    manager.integrate, task.id, f"[{task.agent_role}] {task.title}"
+                )
+            await self._emit(
+                project,
+                "task_integrated",
+                f"Merged [{task.id}] into the workspace ({len(changed)} file(s))",
+                task_id=task.id,
+                files=changed,
+            )
+        except (WorktreeError, OSError) as exc:  # pragma: no cover - env dependent
+            await self._emit(
+                project,
+                "task_integration_failed",
+                f"Could not merge [{task.id}]; its files remain in the worktree ({exc})",
+                task_id=task.id,
+            )
+        finally:
+            await self._cleanup_worktree(task)
+
+    async def _cleanup_worktree(self, task: Task) -> None:
+        manager = self._worktrees
+        if manager is None or task.worktree is None:
+            return
+        await asyncio.to_thread(manager.remove, task.id)
+        task.worktree = None
 
     def _should_retry(
         self, task: Task, error: str, retryable: bool | None = None
