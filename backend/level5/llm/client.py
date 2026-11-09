@@ -31,6 +31,7 @@ import json
 import logging
 import re
 import tempfile
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -40,6 +41,9 @@ import httpx
 from level5.config import Settings, get_settings
 
 logger = logging.getLogger("level5.llm")
+
+# How long to skip the gateway after an observed failure, in seconds.
+_GATEWAY_COOLDOWN_S = 300.0
 
 
 class LLMError(RuntimeError):
@@ -87,6 +91,10 @@ class LLMClient:
     def __init__(self, settings: Settings | None = None) -> None:
         self.settings = settings or get_settings()
         self._client: httpx.AsyncClient | None = None
+        # An empty gateway model registry is a deployment fault, not a
+        # transient error. Once observed, skip the gateway for a short window
+        # instead of paying three failing round-trips on every call.
+        self._gateway_down_until: float = 0.0
 
     async def _http(self) -> httpx.AsyncClient:
         if self._client is None or self._client.is_closed:
@@ -146,6 +154,17 @@ class LLMClient:
             "ask_agent": ("ask_agent",),
         }.get(transport, ("gateway", "ask_agent"))
 
+        # In auto mode, skip the gateway while it is known to be down. An
+        # explicit "gateway" transport always attempts it, so a failure is
+        # still surfaced to the caller rather than hidden.
+        if (
+            transport == "auto"
+            and len(order) > 1
+            and order[0] == "gateway"
+            and time.monotonic() < self._gateway_down_until
+        ):
+            order = order[1:]
+
         errors: list[str] = []
         for name in order:
             try:
@@ -160,6 +179,8 @@ class LLMClient:
                 return await self._chat_ask_agent(messages)
             except Exception as exc:  # noqa: BLE001 - try the next transport
                 errors.append(f"{name}: {exc}")
+                if name == "gateway" and len(order) > 1:
+                    self._gateway_down_until = time.monotonic() + _GATEWAY_COOLDOWN_S
                 if len(order) > 1:
                     logger.warning("LLM transport %s failed: %s", name, exc)
         raise LLMError("LLM request failed on all transports: " + " | ".join(errors))
