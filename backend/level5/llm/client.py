@@ -49,6 +49,21 @@ _GATEWAY_COOLDOWN_S = 300.0
 class LLMError(RuntimeError):
     """Raised when the model backend cannot satisfy a request."""
 
+    def __init__(self, message: str, *, status_code: int | None = None) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+
+    @property
+    def transient(self) -> bool:
+        """True when retrying the same request could plausibly succeed.
+
+        Network faults (no status) and 408/429/5xx are transient; other 4xx are
+        deployment or request faults that retrying cannot fix.
+        """
+        if self.status_code is None:
+            return True
+        return self.status_code in (408, 429) or self.status_code >= 500
+
 
 @dataclass
 class LLMUsage:
@@ -95,6 +110,10 @@ class LLMClient:
         # transient error. Once observed, skip the gateway for a short window
         # instead of paying three failing round-trips on every call.
         self._gateway_down_until: float = 0.0
+        # The gateway's model registry is probed at most once per client so a
+        # deployment fault costs one request, not one per bare model call.
+        self._gateway_probed: bool = False
+        self._gateway_ok: bool = False
 
     async def _http(self) -> httpx.AsyncClient:
         if self._client is None or self._client.is_closed:
@@ -125,6 +144,18 @@ class LLMClient:
         except Exception:  # noqa: BLE001 - health must never raise
             return False
 
+    async def _gateway_usable(self) -> bool:
+        """Probe the gateway's model registry once, then cache the verdict.
+
+        A gateway with no models can serve nothing, so attempting a completion
+        would only burn a request. On a reachable deployment this probe makes
+        the first bare model call fall through to ask_agent immediately.
+        """
+        if not self._gateway_probed:
+            self._gateway_ok = await self.probe_gateway()
+            self._gateway_probed = True
+        return self._gateway_ok
+
     def _headers(self) -> dict[str, str]:
         headers = {"Content-Type": "application/json"}
         if self.settings.session_api_key:
@@ -154,16 +185,16 @@ class LLMClient:
             "ask_agent": ("ask_agent",),
         }.get(transport, ("gateway", "ask_agent"))
 
-        # In auto mode, skip the gateway while it is known to be down. An
+        # In auto mode, skip the gateway while it is known to be down, and skip
+        # it outright when its model registry is empty (nothing to serve). An
         # explicit "gateway" transport always attempts it, so a failure is
         # still surfaced to the caller rather than hidden.
-        if (
-            transport == "auto"
-            and len(order) > 1
-            and order[0] == "gateway"
-            and time.monotonic() < self._gateway_down_until
-        ):
-            order = order[1:]
+        if transport == "auto" and len(order) > 1 and order[0] == "gateway":
+            if time.monotonic() < self._gateway_down_until:
+                order = order[1:]
+            elif not await self._gateway_usable():
+                logger.info("gateway model registry is empty; using ask_agent")
+                order = order[1:]
 
         errors: list[str] = []
         for name in order:
@@ -213,7 +244,8 @@ class LLMClient:
                 response = await client.post(url, json=body, headers=self._headers())
                 if response.status_code >= 400:
                     raise LLMError(
-                        f"gateway {response.status_code}: {response.text[:300]}"
+                        f"gateway {response.status_code}: {response.text[:300]}",
+                        status_code=response.status_code,
                     )
                 payload = response.json()
                 text = _extract_text(payload)
@@ -222,7 +254,15 @@ class LLMClient:
                     usage=LLMUsage.from_response(payload),
                     raw=payload,
                 )
-            except Exception as exc:  # noqa: BLE001 - retried then surfaced
+            except LLMError as exc:
+                # A non-transient gateway fault (e.g. a 404 for a model the
+                # registry does not contain) will not fix itself; surface it so
+                # the transport fallback can take over without wasting retries.
+                if not exc.transient:
+                    raise
+                last_error = exc
+                logger.warning("LLM attempt %s failed: %s", attempt + 1, exc)
+            except Exception as exc:  # noqa: BLE001 - network faults are retried
                 last_error = exc
                 logger.warning("LLM attempt %s failed: %s", attempt + 1, exc)
         raise LLMError(f"LLM request failed after retries: {last_error}")
