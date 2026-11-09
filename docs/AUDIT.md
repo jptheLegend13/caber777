@@ -77,14 +77,16 @@ files, images and reference documents. No upload endpoint existed
 (`grep UploadFile` → no matches). Fix: `POST /api/projects/{id}/attachments`
 plus a frontend attach control.
 
-### F5 — Event stream paging could duplicate or skip events (severity: medium) — **FIXED this cycle**
+### F5 — Event stream paging could duplicate or skip events (severity: medium) — **FIXED and live-verified**
 
 `AgentServerClient.get_all_events` paged on the last event's `timestamp`
 (`timestamp__gte`). Events that share a timestamp — the norm inside a single
 agent step — are then either repeated across a page boundary or skipped when a
 whole page falls inside one timestamp. The server actually returns an opaque
 `next_page_id` cursor; the client now follows it and treats it as
-authoritative. Covered by `tests/test_event_pagination.py`.
+authoritative. Covered by `tests/test_event_pagination.py` and confirmed live
+against the running Agent Server: 329 and 439 events walked across many pages
+with all-unique ids and no duplicates or skips.
 
 ### F6 — Gateway degradation was invisible (severity: medium) — **FIXED this cycle**
 
@@ -95,7 +97,7 @@ model registry and `/api/health` now reports `llm.transport`,
 explicit `gateway` transport cannot serve models. `auto` stays `ok` because it
 falls back to `ask_agent`.
 
-### F7 — Command box bypassed the specialist intelligences (severity: high) — **FIXED this cycle**
+### F7 — Command box bypassed the specialist intelligences (severity: high) — **FIXED and live-verified**
 
 The main product surface (`POST /api/projects/{id}/run`) always planned a
 generic engineering task graph. A building request or a novel-idea request
@@ -106,7 +108,37 @@ actually wired end to end. Fix: the orchestrator's planning was split into
 `understand()` + `plan()`, and `_run_full_pipeline` now dispatches on the
 classified CABER module — buildings → `CABERBuildingService`, novel ideas →
 `innovate_project`, everything else → the task graph. Covered by
-`tests/test_routing.py`.
+`tests/test_routing.py`. Verified live: a villa request classified as module C
+produced a delivered building (`Aurelia Villa`, 11 rooms, 255 primitives, 12/12
+validation checks, `/caber/viewer` served 200), and a service request ran the
+generic path (8 tasks).
+
+### F8 — Routing ran generic research before the specialist engine (severity: medium) — **FIXED this cycle**
+
+After the F7 fix, a building request still ran the generic research step first
+(five web lookups, minutes of latency) before reaching the building engine,
+because research lived inside `understand()`. Fix: research was split into
+`run_research()`; the pipeline classifies, routes buildings and novel ideas
+immediately, and only the generic path runs research → plan → execute. Covered
+by the dispatch tests in `tests/test_routing.py`.
+
+### F9 — A step method shadowed the research engine (severity: high, regression) — **FIXED this cycle**
+
+The F8 refactor added a method named `research` on `Orchestrator`, which
+shadowed the `self.research` `ResearchEngine` attribute, so **every generic
+request failed** with `'ResearchEngine' object is not callable`. Caught live:
+the attached-requirements project `proj_a6eee486487d` failed at the research
+phase. Fix: the step is renamed `run_research`. Regression test in
+`tests/test_orchestrator.py`; the generic path was then re-run live to
+completion (8 tasks planned and executing).
+
+### F10 — Bare-LLM calls retried a known-dead gateway every time (severity: low) — **FIXED this cycle**
+
+Every bare model call paid three failing round-trips to the empty gateway
+before falling back to `ask_agent`. Fix: in `auto` mode the gateway is skipped
+for a short window after an observed failure; an explicit `gateway` transport
+still attempts it, so the failure is surfaced rather than hidden. Covered by
+`tests/test_llm_transport.py`.
 
 ## 3. Capability classification
 
@@ -128,14 +160,14 @@ classified CABER module — buildings → `CABERBuildingService`, novel ideas �
 | Shared sandboxed Python runner | IV (new) | `execution.py`; `tests/test_execution.py` |
 | Frontend workspace UI (tabs, SSE) | IV | `npm run build` passes; served at `/` |
 | Voice input | IU | `useVoiceInput.ts`; needs a real browser session (no mic in CI) |
-| File/image upload | IV (new) | `POST /attachments`; see F4 |
+| File/image upload | IV (new) | `POST /attachments`; see F4. Live-verified: an uploaded `ref-notes.txt` became a user-origin requirement ("Support SSO via SAML and export audit logs") while model-derived requirements stayed `inferred`; a `../../../../etc/evil.txt` upload was contained (no `/etc/evil.txt`; stored under the project's `attachments/` dir). Frontend attach control present and built |
 | Browser preview of a built web app | IV | `/preview/status`, `/preview/*`; traversal rejected (400) |
 | Build → repair → rebuild | IV | `tests/test_build_repair.py`; live build passed |
 | Model/provider registry | IV | `tests/test_providers.py`; `/api/providers` |
 | Bare model calls | IV (new) | was MI/BL (F1) |
 | Self-improvement loop (screened proposals) | IV | `tests/test_self_improvement.py` |
 | Self-benchmarking (own metrics) | IV | `tests/test_benchmarks.py` |
-| **Competitive benchmark suite** | **MI** | Not run; no superiority claim is made |
+| **Competitive benchmark suite** | **PA (new)** | fixed task set, deterministic scorer, per-system aggregation and REST endpoints (`tests/test_benchmark_suite.py`); **no external system has been run** — the environment cannot drive Claude Code, Codex, Cursor, Devin, Factory or Antigravity under equivalent conditions. No superiority claim is made |
 | Authentication / multi-user accounts | **MI** | Single-operator tool; no account system |
 | Per-task git worktree isolation | PA (new) | opt-in flag (F3) |
 
@@ -185,10 +217,10 @@ classified CABER module — buildings → `CABERBuildingService`, novel ideas �
 
 ## 4. Test suite
 
-`backend/.venv/bin/python -m pytest -q` → **174 passed** (this cycle: 153 → 174;
-added `test_execution.py`, `test_innovation.py`, `test_routing.py`). The suite
-replaces only the network boundary in orchestrator tests and states that in the
-module.
+`backend/.venv/bin/python -m pytest -q` → **195 passed** (this cycle: 179 → 195;
+added `test_benchmark_suite.py`, `test_llm_transport.py`, dispatch and
+regression tests). The suite replaces only the network boundary in orchestrator
+tests and states that in the module.
 
 ## 5. Honest limitations carried forward
 
