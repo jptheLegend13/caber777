@@ -226,7 +226,7 @@ async def solve_project(project: Project, *, research: bool = True) -> Project:
         computation_ok=bool(report.computation and report.computation.succeeded),
     )
     project.status = PS.DELIVERED
-    project.snapshot("solution", note=f"confidence={report.confidence}")
+    project.snapshot_workspace("solution", note=f"confidence={report.confidence}")
     await get_store_ref().save(project)
     return project
 

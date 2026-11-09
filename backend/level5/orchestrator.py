@@ -207,7 +207,7 @@ class Orchestrator:
             project.specification, research_context=getattr(self, "_research_context", "")
         )
         project.task_graph = graph
-        project.snapshot("plan", note=f"{len(graph.tasks)} tasks planned")
+        project.snapshot_workspace("plan", note=f"{len(graph.tasks)} tasks planned")
         await self._emit(
             project,
             "plan",
@@ -306,7 +306,7 @@ class Orchestrator:
                 )
             else:
                 project.status = ProjectStatus.DELIVERED
-                project.snapshot("delivered", note="All tasks succeeded")
+                project.snapshot_workspace("delivered", note="All tasks succeeded")
                 await self._emit(project, "delivered", "Project delivered")
             await self._persist(project)
             try:

@@ -200,7 +200,7 @@ def _run_build(app: Project) -> None:
             )
         )
     app.status = ProjectStatus.DELIVERED
-    app.snapshot("delivered", note="Building viewer application built")
+    app.snapshot_workspace("delivered", note="Building viewer application built")
 
 
 def _write_app(

@@ -65,9 +65,19 @@ def _run(args: list[str], cwd: Path, *, check: bool = True) -> subprocess.Comple
 
 
 def is_git_repo(path: Path) -> bool:
-    if not Path(path).exists():
+    """True only when ``path`` is itself a repository root.
+
+    A directory that merely sits *inside* another repository is not its own
+    repository: treating it as one would make a project snapshot commit to the
+    enclosing repository (for example the platform's own source tree when the
+    data directory lives inside it).
+    """
+    path = Path(path)
+    if not path.exists():
         return False
-    result = _run(["rev-parse", "--git-dir"], Path(path), check=False)
+    if not (path / ".git").exists():
+        return False
+    result = _run(["rev-parse", "--git-dir"], path, check=False)
     return result.returncode == 0
 
 

@@ -333,5 +333,5 @@ async def innovate_project(project: Project, *, research: bool = True) -> Projec
         confidence=report.confidence,
     )
     project.status = ProjectStatus.DELIVERED if report.status == "completed" else ProjectStatus.FAILED
-    project.snapshot("innovation", note=report.hypothesis)
+    project.snapshot_workspace("innovation", note=report.hypothesis)
     return project

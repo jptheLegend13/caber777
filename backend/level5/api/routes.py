@@ -280,6 +280,103 @@ async def project_report(project_id: str) -> dict[str, Any]:
     return {"report": report.read_text(encoding="utf-8")}
 
 
+@router.get("/projects/{project_id}/versions")
+async def project_versions(project_id: str) -> dict[str, Any]:
+    """Labelled snapshots, each with the git revision of the workspace."""
+    project = await _load(project_id)
+    return {
+        "items": [json.loads(v.model_dump_json()) for v in project.versions],
+        "count": len(project.versions),
+    }
+
+
+@router.get("/projects/{project_id}/revisions")
+async def project_revisions(project_id: str) -> dict[str, Any]:
+    """The real git history of the workspace (newest first)."""
+    from level5.workspace import WorkspaceError, revisions
+
+    project = await _load(project_id)
+    try:
+        items = await asyncio.to_thread(revisions, Path(project.workspace_path))
+    except WorkspaceError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return {
+        "items": [
+            {
+                "sha": r.sha,
+                "short": r.short,
+                "message": r.message,
+                "committed_at": r.committed_at,
+                "files_changed": r.files_changed,
+            }
+            for r in items
+        ],
+        "count": len(items),
+    }
+
+
+@router.get("/projects/{project_id}/revisions/{sha}/diff")
+async def project_revision_diff(project_id: str, sha: str) -> dict[str, Any]:
+    from level5.workspace import WorkspaceError, diff
+
+    project = await _load(project_id)
+    try:
+        text = await asyncio.to_thread(diff, Path(project.workspace_path), sha)
+    except WorkspaceError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {"sha": sha, "diff": text}
+
+
+class RestoreRequest(BaseModel):
+    sha: str
+    run: bool = False
+
+
+@router.post("/projects/{project_id}/restore")
+async def restore_project(
+    project_id: str, body: RestoreRequest, background: BackgroundTasks
+) -> dict[str, Any]:
+    """Roll the workspace back to a revision.
+
+    The current state is committed first as ``pre-restore`` so the rollback is
+    itself reversible. When ``run`` is true the pipeline is re-run from the
+    restored files.
+    """
+    from level5.workspace import WorkspaceError, restore
+
+    project = await _load(project_id)
+    if project.id in _background and not _background[project.id].done():
+        raise HTTPException(status_code=409, detail="project is already running")
+    try:
+        await asyncio.to_thread(restore, Path(project.workspace_path), body.sha)
+    except WorkspaceError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    project.log("restored", f"Workspace restored to {body.sha[:8]}")
+    await get_store().save(project)
+    if body.run:
+        _launch(project.id, _run_full_pipeline(project.id, research=False))
+    return {"restored": True, "sha": body.sha, "rerunning": body.run}
+
+
+@router.get("/projects/{project_id}/export")
+async def export_project(project_id: str) -> FileResponse:
+    """Download the workspace deliverables as a zip archive."""
+    from level5.workspace import WorkspaceError, export_zip
+
+    project = await _load(project_id)
+    destination = Path(project.workspace_path).parent / f"{project.id}-export.zip"
+    try:
+        await asyncio.to_thread(export_zip, Path(project.workspace_path), destination)
+    except WorkspaceError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    safe = re.sub(r"[^A-Za-z0-9._-]+", "-", project.name).strip("-") or project.id
+    return FileResponse(
+        destination,
+        media_type="application/zip",
+        filename=f"{safe}.zip",
+    )
+
+
 @router.get("/projects/{project_id}/attachments")
 async def list_attachments(project_id: str) -> dict[str, Any]:
     project = await _load(project_id)

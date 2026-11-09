@@ -11,6 +11,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 from enum import Enum
+from pathlib import Path
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
@@ -269,6 +270,7 @@ class VersionSnapshot(BaseModel):
     status: ProjectStatus = ProjectStatus.DRAFT
     files: list[str] = Field(default_factory=list)
     note: str = ""
+    commit_sha: str = ""  # git revision of the workspace at this snapshot
 
 
 # --------------------------------------------------------------------------- #
@@ -325,4 +327,27 @@ class Project(BaseModel):
             note=note,
         )
         self.versions.append(version)
+        return version
+
+    def snapshot_workspace(self, label: str, note: str = "") -> VersionSnapshot:
+        """Record a version snapshot and commit the workspace to git.
+
+        The in-memory snapshot gives the UI a labelled timeline; the git commit
+        makes each step a real, restorable revision of the actual files. A git
+        failure is logged and does not abort the run — the deliverable matters
+        more than its history.
+        """
+        version = self.snapshot(label, note)
+        if not self.workspace_path:
+            return version
+        try:
+            from level5.workspace import snapshot as _commit
+
+            version.commit_sha = _commit(Path(self.workspace_path), label, note) or ""
+        except Exception as exc:  # noqa: BLE001 - history is best-effort
+            import logging
+
+            logging.getLogger("level5.models").warning(
+                "workspace snapshot %r failed: %s", label, exc
+            )
         return version

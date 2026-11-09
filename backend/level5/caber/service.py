@@ -94,7 +94,7 @@ class CABERBuildingService:
             passed=report.passed,
         )
         project.status = ProjectStatus.DELIVERED if report.passed else ProjectStatus.REVIEWING
-        project.snapshot("built", note=f"{scene['stats']['primitives']} primitives")
+        project.snapshot_workspace("built", note=f"{scene['stats']['primitives']} primitives")
         self._last_spec[project.id] = spec
         self._last_scene[project.id] = scene
         self._last_report[project.id] = report
