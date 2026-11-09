@@ -14,3 +14,6 @@ dist/
 # Local secrets
 .oh_session_key
 .env
+
+# TypeScript incremental build cache
+*.tsbuildinfo

@@ -61,6 +61,20 @@ FastAPI control plane            backend/level5/api
 See `docs/ADR/` for the reasoning behind these choices and `docs/ROADMAP.md` for
 milestone status.
 
+### Documentation
+
+| Document | Contents |
+|---|---|
+| `docs/LEVEL5-REQUIREMENTS.md` | Consolidated requirements and intended scope |
+| `docs/ROADMAP.md` | Milestone status (`[x]` done, `[~]` partial, `[ ]` not started) |
+| `docs/RUNS.md` | Verified runs, real numbers, explicit non-claims |
+| `docs/ARCHITECTURE-INDEPENDENCE.md` | Independence architecture and the staged model roadmap |
+| `docs/AUDIT.md` | Capability audit and feature findings |
+| `docs/SECURITY.md` | Security review and dependency-risk analysis |
+| `docs/HANDOVER.md` | Release-candidate handover |
+| `docs/ADR/` | Architecture decision records |
+| `docs/GENERATED-DELIVERABLES-NOTES.md` | Notes on generated deliverables (not in this repo) |
+
 ## Quick start
 
 Requirements: Python 3.11+, Node 20+, and a reachable OpenHands Agent Server.
