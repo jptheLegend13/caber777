@@ -273,6 +273,24 @@ class VersionSnapshot(BaseModel):
 # --------------------------------------------------------------------------- #
 # Project
 # --------------------------------------------------------------------------- #
+class Attachment(BaseModel):
+    """A file, image or reference document supplied with a request.
+
+    Stored on disk under the project workspace so an agent conversation can read
+    it; the model keeps only metadata. ``text_excerpt`` carries a short
+    extracted sample of text-like files so the understanding engine can consider
+    the content without a tool call.
+    """
+
+    id: str = Field(default_factory=lambda: _id("att"))
+    filename: str
+    content_type: str = "application/octet-stream"
+    size_bytes: int = 0
+    path: str = ""
+    text_excerpt: str = ""
+    created_at: datetime = Field(default_factory=_now)
+
+
 class Project(BaseModel):
     id: str = Field(default_factory=lambda: _id("proj"))
     name: str
@@ -287,6 +305,7 @@ class Project(BaseModel):
     versions: list[VersionSnapshot] = Field(default_factory=list)
     workspace_path: str = ""
     conversation_ids: list[str] = Field(default_factory=list)
+    attachments: list[Attachment] = Field(default_factory=list)
     preview_url: str | None = None
     created_at: datetime = Field(default_factory=_now)
     updated_at: datetime = Field(default_factory=_now)

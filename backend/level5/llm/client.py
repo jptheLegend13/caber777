@@ -1,14 +1,28 @@
 """Model-agnostic LLM access for LEVEL 5.
 
-Two complementary paths are supported:
+Bare (non-agent) model calls - used by request understanding, planning, research
+synthesis, the CABER architect and the problem solver - travel over one of two
+transports:
 
-1. :class:`LLMClient` makes *bare* model calls through an OpenAI-compatible
-   gateway. Inside the OpenHands sandbox this is the Agent Server's own
-   ``/v1`` gateway, which resolves the operator-configured LLM profile.
-2. :func:`refresh_managed_llm_key` fetches the short-lived managed API key so a
-   delegated Agent Server conversation can authenticate with the real model.
+1. **OpenAI-compatible gateway** (``{agent_server}/v1/chat/completions``). This
+   is the preferred transport when the deployment has populated the gateway's
+   model registry. Some Agent Server deployments ship with an *empty* registry
+   (``GET /v1/models`` -> ``{"data":[]}``) and answer every request with
+   ``404 Profile 'Default' not found``.
+2. **ask_agent** (``POST /api/conversations/{id}/ask_agent``). This asks an
+   existing, profile-resolved conversation a question and returns the model's
+   text. It works on deployments where the gateway does not, because the
+   conversation's LLM profile is resolved by the server rather than by name.
 
-Neither path ever writes credentials to disk or to logs.
+:class:`LLMClient` selects a transport (``LEVEL5_LLM_TRANSPORT`` =
+``auto`` | ``gateway`` | ``ask_agent``) and, in ``auto`` mode, falls back from
+the gateway to ``ask_agent`` on the first gateway failure so a broken gateway
+degrades to a working path instead of failing the whole request.
+
+:func:`refresh_managed_llm_key` fetches the short-lived managed API key so a
+delegated Agent Server conversation can authenticate with the real model.
+
+No path ever writes credentials to disk or to logs.
 """
 
 from __future__ import annotations
@@ -16,7 +30,9 @@ from __future__ import annotations
 import json
 import logging
 import re
+import tempfile
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -82,6 +98,25 @@ class LLMClient:
             await self._client.aclose()
         self._client = None
 
+    async def probe_gateway(self) -> bool:
+        """Return True when the OpenAI-compatible gateway can serve models.
+
+        The gateway is only usable when its model registry is populated. An
+        empty registry is a deployment fault, not a transient error, so the
+        health endpoint reports it rather than silently falling back.
+        """
+        try:
+            client = await self._http()
+            response = await client.get(
+                f"{self.settings.llm_gateway_url}/models", headers=self._headers()
+            )
+            if response.status_code >= 400:
+                return False
+            data = response.json().get("data")
+            return bool(data)
+        except Exception:  # noqa: BLE001 - health must never raise
+            return False
+
     def _headers(self) -> dict[str, str]:
         headers = {"Content-Type": "application/json"}
         if self.settings.session_api_key:
@@ -97,7 +132,48 @@ class LLMClient:
         max_tokens: int | None = None,
         response_format: dict[str, Any] | None = None,
     ) -> LLMResult:
-        """Send a chat completion request and return the assistant text."""
+        """Send a chat request over the configured transport and return the text.
+
+        ``auto`` tries the OpenAI-compatible gateway first and falls back to
+        ``ask_agent``. The gateway is the richer transport (real token usage,
+        native JSON mode), so it is preferred where it works; ``ask_agent`` is
+        the path that works on deployments whose gateway model registry is
+        empty.
+        """
+        transport = (self.settings.llm_transport or "auto").lower()
+        order = {
+            "gateway": ("gateway",),
+            "ask_agent": ("ask_agent",),
+        }.get(transport, ("gateway", "ask_agent"))
+
+        errors: list[str] = []
+        for name in order:
+            try:
+                if name == "gateway":
+                    return await self._chat_gateway(
+                        messages,
+                        model=model,
+                        temperature=temperature,
+                        max_tokens=max_tokens,
+                        response_format=response_format,
+                    )
+                return await self._chat_ask_agent(messages)
+            except Exception as exc:  # noqa: BLE001 - try the next transport
+                errors.append(f"{name}: {exc}")
+                if len(order) > 1:
+                    logger.warning("LLM transport %s failed: %s", name, exc)
+        raise LLMError("LLM request failed on all transports: " + " | ".join(errors))
+
+    async def _chat_gateway(
+        self,
+        messages: list[dict[str, Any]],
+        *,
+        model: str | None = None,
+        temperature: float = 0.2,
+        max_tokens: int | None = None,
+        response_format: dict[str, Any] | None = None,
+    ) -> LLMResult:
+        """Call the OpenAI-compatible gateway, retrying transient faults."""
         url = f"{self.settings.llm_gateway_url}/chat/completions"
         body: dict[str, Any] = {
             "model": model or self.settings.llm_model,
@@ -129,6 +205,82 @@ class LLMClient:
                 last_error = exc
                 logger.warning("LLM attempt %s failed: %s", attempt + 1, exc)
         raise LLMError(f"LLM request failed after retries: {last_error}")
+
+    async def _chat_ask_agent(self, messages: list[dict[str, Any]]) -> LLMResult:
+        """Make a bare model call through the Agent Server's ``ask_agent`` API.
+
+        The server resolves the model from the conversation's LLM profile, so
+        this works when the OpenAI-compatible gateway's registry is empty. The
+        full message list is rendered into the single ``question`` field; the
+        server appends its own agent context, which is why the system prompt is
+        passed as data ("You must follow these instructions...") rather than as
+        a trusted system role.
+
+        The probe conversation is created with no tools, so this is a plain
+        model call and cannot touch the workspace.
+        """
+        client = await self._http()
+        workspace = Path(tempfile.gettempdir()) / "level5-llm-probe"
+        workspace.mkdir(parents=True, exist_ok=True)
+        create_body: dict[str, Any] = {
+            "agent_settings": {
+                "agent_kind": "openhands",
+                "llm": {
+                    "model": self.settings.llm_model_raw,
+                    "auth_type": "api_key",
+                    "base_url": self.settings.llm_base_url,
+                    "usage_id": "level5",
+                    "num_retries": 2,
+                    "drop_params": True,
+                    "native_tool_calling": True,
+                },
+                "tools": [],
+                "include_default_tools": False,
+            },
+            "workspace": {"kind": "LocalWorkspace", "working_dir": str(workspace)},
+            "confirmation_policy": {"kind": "NeverConfirm"},
+            "max_iterations": 5,
+            "worktree": False,
+            "initial_message": {
+                "role": "user",
+                "content": [{"type": "text", "text": "standby"}],
+                "run": False,
+            },
+        }
+        response = await client.post(
+            f"{self.settings.agent_server_url}/api/conversations",
+            json=create_body,
+            headers=self._headers(),
+        )
+        if response.status_code >= 400:
+            raise LLMError(
+                f"ask_agent: create conversation failed {response.status_code}: "
+                f"{response.text[:200]}"
+            )
+        conversation_id = response.json()["id"]
+        try:
+            ask = await client.post(
+                f"{self.settings.agent_server_url}/api/conversations/"
+                f"{conversation_id}/ask_agent",
+                json={"question": _render_question(messages)},
+                headers=self._headers(),
+            )
+            if ask.status_code >= 400:
+                raise LLMError(
+                    f"ask_agent {ask.status_code}: {ask.text[:300]}"
+                )
+            text = str(ask.json().get("response", ""))
+            return LLMResult(text=text, usage=LLMUsage(model=self.settings.llm_model_raw))
+        finally:
+            # Best-effort cleanup; a leaked probe conversation is harmless.
+            try:
+                await client.delete(
+                    f"{self.settings.agent_server_url}/api/conversations/"
+                    f"{conversation_id}",
+                    headers=self._headers(),
+                )
+            except Exception:  # noqa: BLE001 - cleanup must not mask the result
+                pass
 
     async def chat_json(
         self,
@@ -188,6 +340,42 @@ def _extract_text(payload: dict[str, Any]) -> str:
 
 
 _FENCE = re.compile(r"```(?:json)?\s*(.*?)```", re.DOTALL)
+
+
+def _render_question(messages: list[dict[str, Any]]) -> str:
+    """Flatten a chat message list into the single question ask_agent accepts.
+
+    The system instruction is passed as data, not as a trusted system role: the
+    Agent Server wraps ``question`` in its own conversation context, so anything
+    phrased as a role would be interpreted loosely. Stating it as an explicit
+    instruction keeps the model on task for JSON-producing callers.
+    """
+    system_parts: list[str] = []
+    dialogue: list[str] = []
+    for message in messages:
+        role = str(message.get("role", "user"))
+        content = message.get("content", "")
+        if isinstance(content, list):
+            content = "".join(
+                part.get("text", "")
+                for part in content
+                if isinstance(part, dict) and part.get("type") in (None, "text")
+            )
+        text = str(content)
+        if role == "system":
+            system_parts.append(text)
+        elif role == "assistant":
+            dialogue.append(f"Assistant: {text}")
+        else:
+            dialogue.append(text)
+    parts: list[str] = []
+    if system_parts:
+        parts.append(
+            "You must follow these instructions exactly for the next reply:\n"
+            + "\n\n".join(system_parts)
+        )
+    parts.extend(dialogue)
+    return "\n\n".join(parts).strip() or "(no question)"
 
 
 def parse_json_loose(text: str) -> dict[str, Any] | None:

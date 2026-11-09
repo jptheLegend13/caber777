@@ -181,3 +181,19 @@ token module. A class not backed by a Meridian token simply does not exist.
   accurate; the founder relies on it.
 - The backend must be restarted to pick up code changes (uvicorn is not started
   with `--reload` in this environment).
+- **TaskFlow web design system** lives under
+  `.level5-data/projects/proj_2d3b48e3f1cf/apps/web` (distinct from the
+  `frontend/` Meridian system above). Tokens are hand-authored in
+  `src/styles/tokens.css`; `tailwind.config.ts` `extend`s Tailwind so every
+  utility resolves to a `var(--…)`. Guard tests:
+  `src/styles/__tests__/no-magic-values.test.ts` (no colour literals in
+  components), `tokens.contrast.test.ts` (WCAG 2.1 AA per theme) and
+  `tokens.structure.test.ts`. Run `npm run typecheck|lint|test|build
+  --workspace @taskflow/web`.
+- Contrast gotcha (learned the hard way): a single `--color-primary` cannot be
+  both a fill (carries white text) *and* text-on-surface in dark mode — the fill
+  is only ~3.95:1 on the surface. The system therefore has a separate
+  `--color-primary-text` (brand-600 light / brand-300 dark) for primary-coloured
+  text (`text-primary-text`); never use `text-primary`. Likewise raw status
+  fills (e.g. `text-warning` = warning-500, 2.35:1 on white) fail the 3:1
+  non-text bar as glyphs — use the `*-subtle-fg` variants on surfaces.

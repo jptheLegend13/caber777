@@ -130,8 +130,25 @@ button.primary:hover:not(:disabled) { filter: brightness(1.1); }
   width: 100%; background: transparent; border: none; resize: vertical;
   min-height: 56px; outline: none; line-height: 1.55;
 }
-.command-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; }
+.command-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; align-items: center; }
 .mic.listening { border-color: var(--bad); color: var(--bad); }
+.attach {
+  display: inline-flex; align-items: center; gap: 6px; cursor: pointer;
+  font-size: 12px; padding: 6px 10px; border-radius: var(--radius-sm);
+  border: 1px solid var(--line-2); background: var(--bg-2); color: var(--text-dim);
+}
+.attach:hover { color: var(--text); border-color: var(--line-3, var(--line-2)); }
+.pending-files { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.pending-files .chip {
+  display: inline-flex; align-items: center; gap: 6px; font-size: 12px;
+  padding: 4px 8px; border-radius: 999px; border: 1px solid var(--line-2);
+  background: var(--bg-2); color: var(--text-dim);
+}
+.pending-files .chip button {
+  border: none; background: none; color: var(--text-faint); cursor: pointer;
+  font-size: 14px; line-height: 1; padding: 0;
+}
+.pending-files .chip button:hover { color: var(--bad); }
 .interim { color: var(--text-faint); font-style: italic; margin-top: 6px; }
 .error-banner {
   margin-top: 10px; padding: 10px 12px; border-radius: var(--radius-sm);

@@ -40,6 +40,15 @@ class Settings:
         self.llm_model: str = _env("LEVEL5_LLM_MODEL", "openhands_Default")
         self.llm_timeout: float = float(_env("LEVEL5_LLM_TIMEOUT", "300"))
         self.llm_max_retries: int = int(_env("LEVEL5_LLM_MAX_RETRIES", "3"))
+        # Transport for bare (non-agent) model calls:
+        #   auto      - try the OpenAI-compatible gateway, fall back to ask_agent
+        #   gateway   - OpenAI-compatible gateway only
+        #   ask_agent - Agent Server ask_agent API only
+        # Deployments with an empty gateway model registry need ask_agent.
+        self.llm_transport: str = _env("LEVEL5_LLM_TRANSPORT", "auto")
+        self.max_attachment_bytes: int = int(
+            _env("LEVEL5_MAX_ATTACHMENT_BYTES", str(25 * 1024 * 1024))
+        )
 
         # Model used by delegated agent conversations (provider/model form) and
         # the proxy those conversations authenticate against.

@@ -1,5 +1,6 @@
 import type {
   AgentRole,
+  Attachment,
   Project,
   ProjectSummary,
   Scene,
@@ -95,6 +96,28 @@ export const api = {
       package_dir: string | null;
       build: { status: string; name: string; message?: string } | null;
     }>(`/projects/${id}/preview/status`),
+
+  listAttachments: (id: string) =>
+    request<{ items: Attachment[] }>(`/projects/${id}/attachments`),
+
+  uploadAttachment: async (id: string, file: File): Promise<{ attachment: Attachment }> => {
+    const form = new FormData();
+    form.append("file", file);
+    const response = await fetch(`${BASE}/projects/${id}/attachments`, {
+      method: "POST",
+      body: form,
+    });
+    if (!response.ok) {
+      const detail = await response.text();
+      throw new Error(`${response.status}: ${detail.slice(0, 300)}`);
+    }
+    return (await response.json()) as { attachment: Attachment };
+  },
+
+  deleteAttachment: (id: string, attachmentId: string) =>
+    request<{ deleted: boolean }>(`/projects/${id}/attachments/${attachmentId}`, {
+      method: "DELETE",
+    }),
 
   streamUrl: (id: string) => `${BASE}/projects/${id}/stream`,
 };

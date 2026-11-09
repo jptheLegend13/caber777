@@ -140,6 +140,16 @@ export interface VersionSnapshot {
   note: string;
 }
 
+export interface Attachment {
+  id: string;
+  filename: string;
+  content_type: string;
+  size_bytes: number;
+  path: string;
+  text_excerpt: string;
+  created_at: string;
+}
+
 export interface Project {
   id: string;
   name: string;
@@ -153,6 +163,7 @@ export interface Project {
   events: ProjectEvent[];
   versions: VersionSnapshot[];
   workspace_path: string;
+  attachments: Attachment[];
   preview_url: string | null;
   created_at: string;
   updated_at: string;

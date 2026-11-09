@@ -44,6 +44,8 @@ export default function App() {
   const [project, setProject] = useState<Project | null>(null);
   const [tab, setTab] = useState<Tab>("overview");
   const [command, setCommand] = useState("");
+  const [pendingFiles, setPendingFiles] = useState<File[]>([]);
+  const [uploading, setUploading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [agentServer, setAgentServer] = useState<{ reachable: boolean; version: string | null } | null>(null);
@@ -137,16 +139,31 @@ export default function App() {
     setBusy(true);
     setError(null);
     try {
-      const { project: created } = await api.createProject({ request: text, auto_start: true });
+      // Attachments belong to a project, so a request that carries files is
+      // created first, files are uploaded, and only then is execution started.
+      const { project: created } = await api.createProject({
+        request: text,
+        auto_start: pendingFiles.length === 0,
+      });
       setCommand("");
+      if (pendingFiles.length > 0) {
+        setUploading(true);
+        for (const file of pendingFiles) {
+          await api.uploadAttachment(created.id, file);
+        }
+        setPendingFiles([]);
+        setUploading(false);
+        await api.runProject(created.id);
+      }
       refreshList();
       await openProject(created.id);
     } catch (err) {
       setError((err as Error).message);
     } finally {
+      setUploading(false);
       setBusy(false);
     }
-  }, [command, busy, openProject, refreshList]);
+  }, [command, busy, pendingFiles, openProject, refreshList]);
 
   const runAgain = useCallback(async () => {
     if (!project) return;
@@ -262,11 +279,41 @@ export default function App() {
                     {voice.listening ? "◉ Listening" : "🎙 Voice"}
                   </button>
                 )}
+                <label className="attach" title="Attach files, images or reference documents">
+                  📎 Attach
+                  <input
+                    type="file"
+                    multiple
+                    style={{ display: "none" }}
+                    onChange={(event) => {
+                      const files = Array.from(event.target.files ?? []);
+                      if (files.length) setPendingFiles((current) => [...current, ...files]);
+                      event.target.value = "";
+                    }}
+                  />
+                </label>
                 <button className="primary" onClick={submit} disabled={busy || !command.trim()}>
-                  {busy ? "Starting…" : "Run"}
+                  {uploading ? "Uploading…" : busy ? "Starting…" : "Run"}
                 </button>
               </div>
             </div>
+            {pendingFiles.length > 0 && (
+              <div className="pending-files">
+                {pendingFiles.map((file, index) => (
+                  <span className="chip" key={`${file.name}-${index}`}>
+                    {file.name}
+                    <button
+                      onClick={() =>
+                        setPendingFiles((current) => current.filter((_, i) => i !== index))
+                      }
+                      title="Remove"
+                    >
+                      ×
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
             {voice.interim && <div className="interim">{voice.interim}</div>}
             {error && <div className="error-banner">{error}</div>}
           </section>

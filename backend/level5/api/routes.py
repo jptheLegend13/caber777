@@ -8,7 +8,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, File, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
@@ -17,7 +17,14 @@ from level5.caber.service import CABERBuildingService
 from level5.config import get_settings
 from level5.events import get_event_bus
 from level5.intelligence.problem_solving import ProblemSolver
-from level5.models import CABERModule, Project, ProjectDomain, ProjectStatus
+from level5.llm.client import get_llm_client
+from level5.models import (
+    Attachment,
+    CABERModule,
+    Project,
+    ProjectDomain,
+    ProjectStatus,
+)
 from level5.orchestrator import Orchestrator
 from level5.runtime.agent_server import get_agent_client
 from level5.storage.store import get_store
@@ -64,10 +71,20 @@ class BuildingRequest(BaseModel):
 async def health() -> dict[str, Any]:
     settings = get_settings()
     server = await get_agent_client().healthy()
+    gateway_ok = await get_llm_client().probe_gateway()
+    transport = (settings.llm_transport or "auto").lower()
+    # "auto" stays healthy when the gateway is down because it falls back to
+    # ask_agent; an explicit "gateway" transport does not.
+    llm_ready = gateway_ok or transport in ("auto", "ask_agent")
     return {
-        "status": "ok",
+        "status": "ok" if llm_ready else "degraded",
         "service": "LEVEL 5",
         "version": "0.1.0",
+        "llm": {
+            "transport": transport,
+            "gateway_models_available": gateway_ok,
+            "ready": llm_ready,
+        },
         "agent_server": {
             "url": settings.agent_server_url,
             "reachable": bool(server),
@@ -228,6 +245,76 @@ async def project_report(project_id: str) -> dict[str, Any]:
     if not report.exists():
         raise HTTPException(status_code=404, detail="report not generated yet")
     return {"report": report.read_text(encoding="utf-8")}
+
+
+@router.get("/projects/{project_id}/attachments")
+async def list_attachments(project_id: str) -> dict[str, Any]:
+    project = await _load(project_id)
+    return {"items": [a.model_dump() for a in project.attachments]}
+
+
+@router.post("/projects/{project_id}/attachments", status_code=201)
+async def upload_attachment(
+    project_id: str, file: UploadFile = File(...)
+) -> dict[str, Any]:
+    """Accept a file, image or reference document for a project.
+
+    The bytes are written under the project workspace in an ``attachments``
+    directory so an agent conversation can read them. Only metadata plus a short
+    text excerpt is kept in the project record, and the stored filename is
+    sanitised so an upload cannot escape the attachments directory.
+    """
+    project = await _load(project_id)
+    settings = get_settings()
+    safe_name = Path(file.filename or "upload").name
+    if not safe_name or safe_name in {".", ".."}:
+        raise HTTPException(status_code=400, detail="invalid filename")
+    data = await file.read()
+    if len(data) > settings.max_attachment_bytes:
+        raise HTTPException(
+            status_code=413,
+            detail=f"attachment exceeds {settings.max_attachment_bytes} bytes",
+        )
+    target_dir = Path(project.workspace_path or settings.projects_dir / project.id)
+    target_dir = target_dir / "attachments"
+    target_dir.mkdir(parents=True, exist_ok=True)
+    attachment = Attachment(
+        filename=safe_name,
+        content_type=file.content_type or "application/octet-stream",
+        size_bytes=len(data),
+    )
+    target = target_dir / f"{attachment.id}_{safe_name}"
+    target.write_bytes(data)
+    attachment.path = str(target)
+    attachment.text_excerpt = _extract_text_excerpt(target, attachment.content_type)
+    project.attachments.append(attachment)
+    project.log(
+        "attachment", f"Attached {safe_name}", attachment_id=attachment.id
+    )
+    await get_store().save(project)
+    return {"attachment": attachment.model_dump(), "project_id": project.id}
+
+
+@router.delete("/projects/{project_id}/attachments/{attachment_id}")
+async def delete_attachment(project_id: str, attachment_id: str) -> dict[str, Any]:
+    project = await _load(project_id)
+    remaining: list[Attachment] = []
+    removed: Attachment | None = None
+    for attachment in project.attachments:
+        if attachment.id == attachment_id:
+            removed = attachment
+        else:
+            remaining.append(attachment)
+    if removed is None:
+        raise HTTPException(status_code=404, detail="attachment not found")
+    if removed.path:
+        try:
+            Path(removed.path).unlink(missing_ok=True)
+        except OSError:  # pragma: no cover - best effort
+            logger.warning("could not remove attachment file %s", removed.path)
+    project.attachments = remaining
+    await get_store().save(project)
+    return {"deleted": True, "id": attachment_id}
 
 
 @router.post("/projects/{project_id}/follow-up")
@@ -518,3 +605,34 @@ def _read_text(path: Path, limit: int = 200_000) -> str:
 
 def _title_from(text: str) -> str:
     return (text.strip().split("\n")[0][:70]) or "Untitled project"
+
+
+_TEXT_CONTENT_HINTS = (
+    "text/",
+    "application/json",
+    "application/xml",
+    "application/yaml",
+    "application/x-yaml",
+    "application/javascript",
+    "application/typescript",
+    "application/x-sh",
+    "application/sql",
+)
+
+
+def _extract_text_excerpt(path: Path, content_type: str, limit: int = 20_000) -> str:
+    """Return a short text sample of an attachment for request understanding.
+
+    Only text-like content is read; images and binaries return an empty string so
+    a large upload is never slurped into the project record.
+    """
+    looks_textual = content_type.startswith("text/") or any(
+        hint in content_type for hint in _TEXT_CONTENT_HINTS
+    )
+    if not looks_textual:
+        return ""
+    try:
+        raw = path.read_bytes()[: limit * 4]
+        return raw.decode("utf-8", errors="replace")[:limit]
+    except OSError:
+        return ""

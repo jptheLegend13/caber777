@@ -197,51 +197,64 @@ class AgentServerClient:
         limit: int = 100,
         kind: str | None = None,
         since: str | None = None,
-    ) -> list[dict[str, Any]]:
+        page_id: str | None = None,
+    ) -> tuple[list[dict[str, Any]], str | None]:
+        """Read one page of events and return ``(events, next_page_id)``.
+
+        The server caps ``limit`` at 100 and returns an opaque ``next_page_id``
+        cursor. The cursor is the only correct way to walk the stream: paging on
+        a timestamp duplicates or skips events that share a timestamp, which is
+        common inside a single agent step.
+        """
         client = await self._http()
         params: dict[str, Any] = {"limit": min(limit, 100), "sort_order": "TIMESTAMP"}
         if kind:
             params["kind"] = kind
         if since:
             params["timestamp__gte"] = since
+        if page_id:
+            params["page_id"] = page_id
         response = await client.get(
             f"/api/conversations/{conversation_id}/events/search",
             params=params,
         )
         if response.status_code >= 400:
-            return []
+            return [], None
         payload = response.json()
-        return payload.get("items") or payload.get("events") or []
+        events = payload.get("items") or payload.get("events") or []
+        return events, payload.get("next_page_id")
 
     async def get_all_events(
         self, conversation_id: str, *, max_events: int = 5000
     ) -> list[dict[str, Any]]:
-        """Read the whole event stream, newest cursor = last timestamp.
+        """Walk the whole event stream using the server's opaque cursor.
 
-        The search endpoint returns one page and exposes no cursor, but it does
-        accept ``timestamp__gte``. Paging on the last event's timestamp walks
-        the full run; ids are deduplicated because a page boundary can repeat
-        an event that shares the cursor's timestamp.
+        The server caps a page at 100 events and returns ``next_page_id``; that
+        cursor is followed until exhausted. Ids are deduplicated as a belt-and-
+        braces guard against a boundary repeating an event.
         """
         collected: list[dict[str, Any]] = []
         seen: set[str] = set()
         cursor: str | None = None
+        seen_cursors: set[str] = set()
         while len(collected) < max_events:
-            page = await self.get_events(conversation_id, limit=100, since=cursor)
+            page, cursor = await self.get_events(
+                conversation_id, limit=100, page_id=cursor
+            )
             if not page:
                 break
-            added = 0
             for event in page:
                 event_id = event.get("id")
-                if event_id and event_id not in seen:
+                if event_id and event_id in seen:
+                    continue
+                if event_id:
                     seen.add(event_id)
-                    collected.append(event)
-                    added += 1
-            if len(page) < 100 or added == 0:
+                collected.append(event)
+            # The cursor is authoritative: a short page can still carry one.
+            # Guard against a server that echoes the same cursor forever.
+            if not cursor or cursor in seen_cursors:
                 break
-            cursor = page[-1].get("timestamp")
-            if not cursor:
-                break
+            seen_cursors.add(cursor)
         return collected
 
     async def last_error(self, conversation_id: str) -> dict[str, Any] | None:
@@ -252,7 +265,7 @@ class AgentServerClient:
         reports the useless generic "ended in error".
         """
         try:
-            events = await self.get_events(
+            events, _ = await self.get_events(
                 conversation_id, limit=10, kind="ConversationErrorEvent"
             )
         except Exception as exc:  # noqa: BLE001 - diagnostics must not raise
@@ -413,7 +426,7 @@ class AgentServerClient:
         seen: set[str] = set()
         while True:
             try:
-                events = await self.get_events(conversation_id, limit=100)
+                events, _ = await self.get_events(conversation_id, limit=100)
             except Exception:  # noqa: BLE001 - transient
                 events = []
             for event in events:
@@ -428,7 +441,8 @@ class AgentServerClient:
                 continue
             if data.get("execution_status") in TERMINAL_STATUSES:
                 await asyncio.sleep(1.0)
-                for event in await self.get_events(conversation_id, limit=100):
+                final_events, _ = await self.get_events(conversation_id, limit=100)
+                for event in final_events:
                     event_id = event.get("id", "")
                     if event_id and event_id not in seen:
                         seen.add(event_id)

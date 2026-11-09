@@ -141,7 +141,7 @@ class Orchestrator:
         text = request or project.original_request
         await self._emit(project, "phase", "Understanding the request", phase="understanding")
 
-        spec = await self.understanding.understand(text)
+        spec = await self.understanding.understand(text, attachments=project.attachments)
         project.specification = spec
         project.name = project.name or _derive_name(text)
         project.status = ProjectStatus.PLANNING
@@ -406,10 +406,11 @@ class Orchestrator:
                 )
                 await asyncio.sleep(self._retry_delay(task.attempts))
                 continue
-            self._fail_task(task, error)
+            self._fail_task(task, error, result=result)
             await self._emit(
                 project, "task_failed", f"[{role.title}] {task.title}: {error}",
                 task_id=task.id,
+                conversation_id=result.conversation_id,
             )
             await self._persist(project)
             return
@@ -441,10 +442,24 @@ class Orchestrator:
         return min(30.0, 5.0 * (2 ** (attempt - 1)))
 
     @staticmethod
-    def _fail_task(task: Task, error: str) -> None:
+    def _fail_task(
+        task: Task, error: str, result: Any | None = None
+    ) -> None:
+        """Mark a task failed, keeping the conversation id and error detail.
+
+        The conversation id is what makes a post-mortem possible: without it the
+        Agent Server conversation that produced the failure cannot be inspected
+        after the run, and the operator only sees "task did not complete".
+        """
         task.status = TaskStatus.FAILED
         task.error = error
         task.finished_at = datetime.now(timezone.utc)
+        if result is not None:
+            conversation_id = getattr(result, "conversation_id", None)
+            if conversation_id:
+                task.conversation_id = conversation_id
+            if not task.evidence and getattr(result, "final_message", None):
+                task.evidence = str(result.final_message)[:2000]
 
     def _task_prompt(self, project: Project, task: Task) -> str:
         spec = project.specification
