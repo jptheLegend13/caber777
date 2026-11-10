@@ -213,6 +213,40 @@ class TaskGraph(BaseModel):
     def by_id(self, task_id: str) -> Task | None:
         return next((t for t in self.tasks if t.id == task_id), None)
 
+    def validate(self) -> None:
+        """Reject malformed task graphs before an execution run begins.
+
+        The planner already filters unknown dependencies and direct cycles, but
+        validation belongs on the domain object as a final invariant boundary.
+        It also protects graphs restored from persistence or produced by a new
+        planner implementation.
+        """
+        by_id = {task.id: task for task in self.tasks}
+        if len(by_id) != len(self.tasks):
+            raise ValueError("task graph contains duplicate task IDs")
+
+        visiting: set[str] = set()
+        visited: set[str] = set()
+
+        def visit(task_id: str) -> None:
+            if task_id in visiting:
+                raise ValueError(f"task graph contains a dependency cycle at {task_id}")
+            if task_id in visited:
+                return
+            visiting.add(task_id)
+            task = by_id[task_id]
+            for dependency in task.dependencies:
+                if dependency not in by_id:
+                    raise ValueError(
+                        f"task {task_id} depends on unknown task {dependency}"
+                    )
+                visit(dependency)
+            visiting.remove(task_id)
+            visited.add(task_id)
+
+        for task in self.tasks:
+            visit(task.id)
+
     def ready(self) -> list[Task]:
         """Tasks whose dependencies have all succeeded."""
         done = {t.id for t in self.tasks if t.status == TaskStatus.SUCCEEDED}
