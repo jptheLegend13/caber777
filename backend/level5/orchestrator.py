@@ -289,6 +289,10 @@ class Orchestrator:
         if memory:
             context = f"{context}\n\n{memory}" if context else memory
         graph = await self.planner.plan(project.specification, research_context=context)
+        # Treat graph integrity as a domain invariant, not a planner convention.
+        # This is also checked after a restart, so a malformed persisted or
+        # future planner graph cannot silently deadlock execution.
+        graph.validate()
         project.task_graph = graph
         project.snapshot_workspace("plan", note=f"{len(graph.tasks)} tasks planned")
         await self._emit(
